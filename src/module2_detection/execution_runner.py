@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any
 
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI
 
 from src.module1_data.task_manager import Task
 from src.module1_data.test_suite import TestCase, TestSuite, TestSuiteBuilder
@@ -128,15 +128,27 @@ class _LLMClient:
 
     def complete(self, system: str, user: str, model: str | None = None) -> str:
         mid = model or self._model
-        resp = self._client.chat.completions.create(
-            model=mid,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
-        )
+        try:
+            resp = self._client.chat.completions.create(
+                model=mid,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+            )
+        except AuthenticationError as e:
+            err_text = str(e).upper()
+            if "HMAC" in err_text:
+                raise ValueError(
+                    "讯飞返回 401（HMAC 不匹配）：OPENAI_API_KEY 必须是控制台里「HTTP 服务接口」的 "
+                    "**APIPassword**，不要把 WebSocket 的 APIKey 或 APISecret 单独当密码填。"
+                    "若你只有 APIKey + APISecret，请在 .env 设置 IFLYTEK_SPARK_API_KEY 与 "
+                    "IFLYTEK_SPARK_API_SECRET（会自动拼成 APIKey:APISecret），并按讯飞文档把 "
+                    "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
+                ) from e
+            raise
         return (resp.choices[0].message.content or "").strip()
 
 

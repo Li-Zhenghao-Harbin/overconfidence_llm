@@ -21,9 +21,9 @@ strategies:
 analysis:
   significance_level: 0.05
 
-# LLM: 官方 OpenAI 用默认 base_url 即可；讯飞星火 OpenAI 兼容见 .env.example
+# LLM: 与 default_model 一致——讯飞星火需 base_url；纯 OpenAI 可改为 gpt-4o 且 base_url: null
 llm:
-  base_url: null
+  base_url: https://spark-api-open.xf-yun.com/v1
   default_model: generalv3.5
   temperature: 0.2
   max_tokens: 4096

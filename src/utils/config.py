@@ -50,8 +50,13 @@ def load_config(path: str | Path) -> dict[str, Any]:
     _deep_merge(cfg, raw)
 
     llm = cfg.setdefault("llm", {})
-    if os.getenv("OPENAI_API_KEY"):
-        llm["api_key"] = os.getenv("OPENAI_API_KEY")
+    fly_key = (os.getenv("IFLYTEK_SPARK_API_KEY") or "").strip()
+    fly_secret = (os.getenv("IFLYTEK_SPARK_API_SECRET") or "").strip()
+    if fly_key and fly_secret:
+        # 讯飞部分 OpenAI 兼容地址要求 Bearer 为「APIKey:APISecret」；与单独 HTTP 的 APIPassword 不同
+        llm["api_key"] = f"{fly_key}:{fly_secret}"
+    elif os.getenv("OPENAI_API_KEY"):
+        llm["api_key"] = os.getenv("OPENAI_API_KEY", "").strip()
     if os.getenv("OPENAI_BASE_URL"):
         llm["base_url"] = os.getenv("OPENAI_BASE_URL").strip().rstrip("/")
 
