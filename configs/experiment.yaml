@@ -1,0 +1,34 @@
+# execution.case_timeout_sec: per-test subprocess timeout
+execution:
+  sandbox: subprocess
+  case_timeout_sec: 15
+
+tasks:
+  task_file: data/raw/tasks.jsonl
+  tasks_per_level: 3
+
+annotation:
+  kappa_threshold: 0.7
+  rubric_levels: 3
+
+strategies:
+  C1: {}
+  C2:
+    max_rounds: 3
+  C3:
+    max_rounds: 3
+
+analysis:
+  significance_level: 0.05
+
+# LLM: 官方 OpenAI 用默认 base_url 即可；讯飞星火 OpenAI 兼容见 .env.example
+llm:
+  base_url: null
+  default_model: generalv3.5
+  temperature: 0.2
+  max_tokens: 4096
+
+models:
+  baseline:
+    - name: spark
+      model: generalv3.5
