@@ -106,8 +106,16 @@ def main():
     if args.phase in ("all", "1"):
         tasks, test_suites = run_phase1(config, logger)
 
+    # Phase 2/3 run in a separate process do not keep in-memory `tasks`; reload from
+    # data/raw/tasks.jsonl (written in Phase 1).
+    if tasks is None and args.phase in ("2", "3"):
+        logger.info("=== Loading tasks from Phase 1 data ===")
+        task_manager = TaskManager(config)
+        tasks = task_manager.load_tasks()
+        logger.info("Loaded %d tasks for phase %s", len(tasks), args.phase)
+
     if args.phase in ("all", "2"):
-        assert tasks is not None, "Run Phase 1 first"
+        assert tasks is not None, "Run Phase 1 first or ensure data/raw/tasks.jsonl exists"
         baseline_results, annotations, ogs_scores = run_phase2(config, tasks, logger)
 
     if args.phase in ("all", "3"):
