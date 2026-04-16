@@ -14,7 +14,8 @@ tasks:
   dataset: humaneval
   humaneval:
     url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
-    limit: 0
+    # 0 = 全量 164 题；本次用 10 题跑通全流程（改 0 可全量；改题量后若需重下可设 always_refresh: true）
+    limit: 10
     always_refresh: false
 
 # Phase 2–4 落盘与图表目录。省略或与 raw 联动：tasks.raw_run_id 为 auto/自定义时，默认用同一 slug 子目录，避免多模型互相覆盖。

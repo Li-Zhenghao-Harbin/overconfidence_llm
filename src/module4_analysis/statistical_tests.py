@@ -46,6 +46,7 @@ class AnalysisReport:
 
 class StatisticalAnalyzer:
     def __init__(self, config: dict):
+        self.config = config
         self.alpha = config["analysis"]["significance_level"]
 
     def run_full_analysis(
@@ -222,8 +223,12 @@ def _chi2_or_fisher(table: np.ndarray) -> tuple[str, float, float, str]:
             odds, p = fisher_exact(table)
             return ("fisher_exact", float(odds), float(p), "expected<5")
         return ("chi_square", float(chi2), float(p_chi), "")
-    chi2, p, _, _ = chi2_contingency(table, correction=False)
-    return ("chi_square", float(chi2), float(p), "")
+    try:
+        chi2, p, _, _ = chi2_contingency(table, correction=False)
+        return ("chi_square", float(chi2), float(p), "")
+    except ValueError as e:
+        # e.g. expected frequency has zeros — common when a column is all-zero
+        return ("chi_square_skipped", float("nan"), float("nan"), str(e))
 
 
 def _rq1_overconfidence_exists(df_c0: pd.DataFrame, alpha: float) -> list[TestReport]:
