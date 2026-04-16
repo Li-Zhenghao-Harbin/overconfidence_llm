@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ class TestCase:
     task_id: str
     input: Any
     expected_output: Any
-    kind: str = "standard"  # standard | adversarial
+    kind: str = "standard"  # standard | adversarial | humaneval
 
 
 @dataclass
@@ -38,7 +39,11 @@ class TestSuiteBuilder:
         suites: dict[str, TestSuite] = {}
         lines: list[str] = []
         for t in tasks:
-            cases = self._build_standard(t) + self._build_adversarial(t)
+            meta = t.metadata or {}
+            if meta.get("humaneval") or meta.get("humaneval_test"):
+                cases = self._build_humaneval(t)
+            else:
+                cases = self._build_standard(t) + self._build_adversarial(t)
             for tc in cases:
                 lines.append(json.dumps(tc.__dict__, ensure_ascii=False))
             suites[t.task_id] = TestSuite(t.task_id, cases)
@@ -46,6 +51,31 @@ class TestSuiteBuilder:
             f.write("\n".join(lines) + ("\n" if lines else ""))
         logger.info("Wrote %d test suite rows to %s", len(lines), self.suite_file)
         return suites
+
+    def _build_humaneval(self, task: Task) -> list[TestCase]:
+        """One bundled HumanEval test (official `check(candidate)` script)."""
+        meta = task.metadata or {}
+        test_src = meta.get("humaneval_test") or meta.get("test")
+        if not test_src:
+            logger.warning("Task %s marked humaneval but missing humaneval_test", task.task_id)
+            return []
+        entry = meta.get("entry_point")
+        if not entry:
+            m = re.search(r"def\s+(\w+)\s*\(", task.function_signature or "")
+            entry = m.group(1) if m else "solution"
+        tc = TestCase(
+            test_id=f"{task.task_id}_humaneval0",
+            task_id=task.task_id,
+            input={
+                "runner": "humaneval",
+                "prompt": task.description,
+                "test": test_src,
+                "entry_point": entry,
+            },
+            expected_output=True,
+            kind="humaneval",
+        )
+        return [tc]
 
     def _build_standard(self, task: Task) -> list[TestCase]:
         """5–8 standard cases per task."""

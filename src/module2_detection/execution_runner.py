@@ -70,10 +70,85 @@ def _outputs_equal(actual: Any, expected: Any) -> bool:
         return False
 
 
+def _merge_humaneval_program(prompt: str, completion: str, entry_point: str) -> str:
+    """Combine HumanEval `prompt` + model `completion` like the official harness.
+
+    If the model returns a full `def entry_point(...):` block, replace the stub in
+    `prompt` from the last occurrence of that signature; otherwise append completion.
+    """
+    comp = completion.strip()
+    key = f"def {entry_point}"
+    if comp.startswith("def ") and key in comp[: len(key) + 20]:
+        i = prompt.rfind(key)
+        if i != -1:
+            return prompt[:i] + comp
+    return prompt + completion
+
+
+def _invoke_humaneval_in_process(
+    prompt: str, completion: str, test_src: str, entry_point: str, timeout: int
+) -> tuple[bool, Any, str, float]:
+    """Run official HumanEval-style tests: exec(prompt+completion) then exec(test)."""
+    program = _merge_humaneval_program(prompt, completion, entry_point)
+    payload = json.dumps({"program": program, "test": test_src})
+    prog = r"""
+import json, sys, traceback, time
+p = json.loads(sys.stdin.read())
+program, test_src = p["program"], p["test"]
+try:
+    t0 = time.perf_counter()
+    g = {}
+    exec(compile(program, "<humaneval_prog>", "exec"), g, g)
+    exec(compile(test_src, "<humaneval_test>", "exec"), g, g)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": True, "runtime_ms": (t1 - t0) * 1000.0}, sys.stdout)
+except Exception:
+    t1 = time.perf_counter()
+    json.dump(
+        {"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0},
+        sys.stdout,
+    )
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", prog],
+            input=payload.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, None, "timeout", float(timeout) * 1000.0
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        return False, None, err or "empty stdout", 0.0
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, None, raw[:2000], 0.0
+    if data.get("ok"):
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0)
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+    )
+
+
 def _invoke_in_process(
     code: str, fn_name: str, inp: Any, timeout: int
 ) -> tuple[bool, Any, str, float]:
     """Run user code in a fresh subprocess (no Docker)."""
+    if isinstance(inp, dict) and inp.get("runner") == "humaneval":
+        return _invoke_humaneval_in_process(
+            str(inp.get("prompt", "")),
+            code,
+            str(inp.get("test", "")),
+            str(inp.get("entry_point", fn_name)),
+            timeout,
+        )
     payload = json.dumps({"code": code, "fn": fn_name, "inp": inp})
     prog = r"""
 import json, sys, traceback, time
@@ -107,7 +182,7 @@ except Exception:
     raw = proc.stdout.decode("utf-8", errors="replace").strip()
     if not raw:
         err = proc.stderr.decode("utf-8", errors="replace")
-        return False, None, err or "empty stdout"
+        return False, None, err or "empty stdout", 0.0
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -130,6 +205,83 @@ def _invoke_in_process_trace(
     Trace is best-effort: it records at most `max_events` line events and a small
     snapshot of locals (repr-truncated).
     """
+    if isinstance(inp, dict) and inp.get("runner") == "humaneval":
+        prompt = str(inp.get("prompt", ""))
+        test_src = str(inp.get("test", ""))
+        ep = str(inp.get("entry_point", fn_name))
+        program = _merge_humaneval_program(prompt, code, ep)
+        payload = json.dumps(
+            {"program": program, "test": test_src, "entry_point": ep, "max_events": int(max_events)}
+        )
+        prog = r"""
+import json, sys, traceback, time
+p = json.loads(sys.stdin.read())
+program, test_src, entry_point = p["program"], p["test"], p["entry_point"]
+max_events = int(p.get("max_events", 200))
+events = []
+
+def _safe_repr(x, limit=200):
+    try:
+        s = repr(x)
+    except Exception:
+        s = "<unrepr>"
+    return s if len(s) <= limit else s[:limit] + "…"
+
+def tracer(frame, event, arg):
+    if frame.f_code.co_filename != "<humaneval_prog>":
+        return tracer
+    if frame.f_code.co_name != entry_point:
+        return tracer
+    if event == "line":
+        if len(events) < max_events:
+            loc = {k: _safe_repr(v) for k, v in frame.f_locals.items() if not k.startswith("__")}
+            events.append({"line": frame.f_lineno, "locals": loc})
+        return tracer
+    return tracer
+
+try:
+    t0 = time.perf_counter()
+    g = {}
+    exec(compile(program, "<humaneval_prog>", "exec"), g, g)
+    sys.settrace(tracer)
+    exec(compile(test_src, "<humaneval_test>", "exec"), g, g)
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": True, "runtime_ms": (t1 - t0) * 1000.0, "trace": events}, sys.stdout, default=str)
+except Exception:
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0, "trace": events}, sys.stdout, default=str)
+"""
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", prog],
+                input=payload.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False, None, "timeout", float(timeout) * 1000.0, "[]"
+        raw = proc.stdout.decode("utf-8", errors="replace").strip()
+        if not raw:
+            err = proc.stderr.decode("utf-8", errors="replace")
+            return False, None, err or "empty stdout", 0.0, "[]"
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return False, None, raw[:2000], 0.0, "[]"
+        trace = json.dumps(data.get("trace") or [], ensure_ascii=False)
+        if data.get("ok"):
+            return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0), trace
+        return (
+            False,
+            None,
+            str(data.get("err", "")),
+            float(data.get("runtime_ms", 0.0) or 0.0),
+            trace,
+        )
+
     payload = json.dumps(
         {"code": code, "fn": fn_name, "inp": inp, "max_events": int(max_events)}
     )

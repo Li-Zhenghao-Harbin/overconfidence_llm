@@ -23,6 +23,7 @@ from src.module2_detection.ogs_calculator import OGSCalculator
 from src.module3_mitigation.strategy_runner import StrategyRunner
 from src.module4_analysis.statistical_tests import StatisticalAnalyzer
 from src.module4_analysis.visualizer import ResultVisualizer
+from src.module1_data.humaneval_dataset import ensure_dataset_tasks
 from src.utils.config import load_config
 from src.utils.logger import setup_logger
 from src.utils.pipeline_io import (
@@ -104,6 +105,9 @@ def main():
 
     logger.info("OverconfidenceLens Pipeline Starting")
     Path("results").mkdir(exist_ok=True)
+
+    if args.phase in ("all", "1", "2", "3"):
+        ensure_dataset_tasks(config, logger)
 
     tasks, test_suites = None, None
     baseline_results, annotations, ogs_scores = None, None, None

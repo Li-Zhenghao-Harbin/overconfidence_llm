@@ -6,6 +6,13 @@ execution:
 tasks:
   task_file: data/raw/tasks.jsonl
   tasks_per_level: 3
+  # builtin: use built-in 9 tasks (or existing tasks.jsonl if present)
+  # humaneval: auto-download HumanEval into task_file before phases that need tasks
+  dataset: humaneval
+  humaneval:
+    url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
+    limit: 0
+    always_refresh: false
 
 annotation:
   kappa_threshold: 0.7

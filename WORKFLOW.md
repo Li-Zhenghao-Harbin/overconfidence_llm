@@ -62,10 +62,11 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 
 | Path | Contents |
 |---|---|
-| `data/raw/tasks.jsonl` | 9 programming tasks (3 per complexity level) |
-| `data/raw/test_suites.jsonl` | Standard + adversarial test cases per task |
+| `data/raw/tasks.jsonl` | Task benchmark used in this run (either the built-in 9 tasks or an imported dataset such as HumanEval) |
+| `data/raw/test_suites.jsonl` | Standard + adversarial test cases per task (used for execution correctness) |
 | `data/processed/baseline_results.jsonl` | C0 execution records |
-| `data/processed/strategy_results.jsonl` | C1/C2/C3 execution records (all rounds) |
+| `data/processed/strategy_results.jsonl` | C1/C2/C3 strategy results (one row per task×condition; includes all rounds) |
+| `data/processed/strategy_execution_records.jsonl` | C1/C2/C3 execution records (one row per round; convenient for RQ3 + plotting) |
 | `data/annotations/` | Human annotation CSV files + auto-annotation JSONL |
 | `results/figures/` | All generated plots (PNG + PDF) |
 | `results/tables/` | Statistical test result tables (CSV + LaTeX) |
@@ -77,11 +78,20 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 
 ### 3.1 Purpose
 
-Define the 9 programming tasks and build the test suites used across all experimental conditions.
+Define (or import) the programming tasks and build the test suites used across all experimental conditions.
+
+Supported benchmark modes:
+- **Built-in mini benchmark**: 9 tasks (3 per complexity level) for fast iteration.
+- **HumanEval (recommended for final reporting)**: import tasks to increase sample size and external validity.
 
 ### 3.2 Task Taxonomy
 
-Tasks are stratified into three complexity levels to enable moderation analysis (RQ4):
+Tasks are stratified into three complexity levels to enable moderation analysis (RQ4).
+
+- For the **built-in 9 tasks**, complexity is provided directly (basic/medium/complex).
+- For **HumanEval**, the dataset itself does not provide a canonical "complexity" label. We therefore derive
+  a proxy complexity bucket for each task (e.g., by prompt length / signature complexity / token count), and
+  split tasks into three bins (low/medium/high). The exact heuristic must be documented in the experiment report.
 
 | Level | Count | Examples | Key Challenges |
 |---|---|---|---|
@@ -92,7 +102,7 @@ Tasks are stratified into three complexity levels to enable moderation analysis 
 Each task record (JSONL) contains:
 - `task_id`, `complexity`, `domain`, `title`, `description`
 - `function_signature` — the exact Python signature to implement
-- `examples` — 2–3 sample input/output pairs
+- `examples` — 1–3 sample input/output pairs (optional when importing external datasets)
 
 ### 3.3 Test Suite Construction
 
@@ -128,6 +138,49 @@ TestSuiteBuilder.build_all(tasks)
             ▼
     Save → data/raw/test_suites.jsonl
 ```
+
+HumanEval integration (conceptual):
+- Import HumanEval prompts into the `Task` schema and write to `data/raw/tasks.jsonl`.
+- Build/attach executable test cases and write to `data/raw/test_suites.jsonl`.
+  - Note: HumanEval's official evaluation relies on hidden tests. For a fully local pipeline, you must provide
+    an open test suite (e.g., public tests from a compatible harness, or project-defined tests) and clearly
+    document this difference in the report.
+
+### 3.5 HumanEval — concrete import (implemented in repo)
+
+**方式 A — 配置开关（推荐）**：在 `configs/experiment.yaml` 的 `tasks` 段设置 `dataset`，`main.py` 在运行 Phase **1/2/3**（以及 `all`）前会自动准备 `tasks.task_file`：
+
+```yaml
+tasks:
+  task_file: data/raw/tasks.jsonl
+  dataset: humaneval   # builtin | humaneval
+  humaneval:
+    url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
+    limit: 0           # >0 时只导入前 N 题（smoke test）
+    always_refresh: false  # true 时每次运行都重新下载覆盖 task_file
+```
+
+- `builtin`：不下载；若 `task_file` 不存在，`TaskManager` 会写入内置 9 题。
+- `humaneval`：若 `task_file` 尚不是 HumanEval 格式（或 `always_refresh: true`），则下载并覆盖写入 `task_file`。
+
+然后照常：
+
+```bash
+python main.py --phase 1   # 生成 test_suites.jsonl
+python main.py --phase 2
+```
+
+**方式 B — 手动脚本**（与方式 A 等价，只是不经过 YAML）：
+
+```bash
+python scripts/import_humaneval.py
+python scripts/import_humaneval.py --limit 5
+python main.py --phase 1
+```
+
+Execution note: the runner merges `prompt + model_completion` similarly to the official harness; if the model returns a **full** `def entry_point(...):` implementation, the merge logic replaces the stub starting at the last `def entry_point` occurrence in the prompt.
+
+**切回 builtin 时**：把 `dataset` 改回 `builtin`；若 `task_file` 仍是 HumanEval 内容，请删除该文件或改 `task_file` 路径，否则 `main.py` 会给出警告。
 
 ---
 
@@ -385,10 +438,13 @@ ResultVisualizer.generate_all_figures()
 | C2 | Execution-Feedback | Failed tests + error tracebacks fed back | 1–3 |
 | C3 | In-Execution Debugging | Failed tests + intermediate runtime trace fed back | 1–3 |
 
-Models under test: **GPT-4o** (OpenAI API) and **GitHub Copilot** (VS Code / REST API).
+Models under test: configured via `configs/experiment.yaml` (OpenAI-compatible providers supported).
 
-Total primary data points: 9 tasks × 2 models × 4 conditions = **72 primary samples**.  
-With multi-round C2/C3: estimated **140–200 total annotated samples**.
+Total primary data points: `N_tasks × N_models × 4 conditions`.
+
+Examples:
+- Built-in benchmark: `9 × N_models × 4`
+- HumanEval: `164 × N_models × 4` (plus multi-round expansion for C2/C3)
 
 ---
 
@@ -444,7 +500,8 @@ data/
 │   └── test_suites.jsonl
 ├── processed/
 │   ├── baseline_results.jsonl
-│   └── strategy_results.jsonl
+│   ├── strategy_results.jsonl
+│   └── strategy_execution_records.jsonl
 └── annotations/
     ├── auto_annotations.jsonl
     ├── human_annotator_A.csv

@@ -12,7 +12,16 @@ from dotenv import load_dotenv
 
 _DEFAULTS: dict[str, Any] = {
     "execution": {"sandbox": "subprocess"},
-    "tasks": {"task_file": "data/raw/tasks.jsonl", "tasks_per_level": 3},
+    "tasks": {
+        "task_file": "data/raw/tasks.jsonl",
+        "tasks_per_level": 3,
+        "dataset": "builtin",
+        "humaneval": {
+            "url": "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz",
+            "limit": 0,
+            "always_refresh": False,
+        },
+    },
     "annotation": {"kappa_threshold": 0.7, "rubric_levels": 3},
     "strategies": {"C1": {}, "C2": {"max_rounds": 3}, "C3": {"max_rounds": 3}},
     "analysis": {"significance_level": 0.05},
