@@ -21,6 +21,7 @@ _DEFAULTS: dict[str, Any] = {
         "default_model": "gpt-4o",
         "temperature": 0.2,
         "max_tokens": 4096,
+        "request_timeout_sec": 60,
     },
     "models": {
         "baseline": [{"name": "primary", "model": None}],

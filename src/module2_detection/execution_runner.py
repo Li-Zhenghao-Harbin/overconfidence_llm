@@ -7,10 +7,9 @@ import logging
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any
-
-from openai import AuthenticationError, OpenAI
 
 from src.module1_data.task_manager import Task
 from src.module1_data.test_suite import TestCase, TestSuite, TestSuiteBuilder
@@ -22,8 +21,12 @@ logger = logging.getLogger(__name__)
 class TestResult:
     test_id: str
     passed: bool
+    kind: str = "standard"  # standard | adversarial
+    expected_output: Any = None
     actual_output: Any = None
     error: str = ""
+    runtime_ms: float = 0.0
+    error_type: str = ""  # compilation_error | logical_bug | api_misuse | runtime_error | timeout
 
 
 @dataclass
@@ -67,14 +70,17 @@ def _outputs_equal(actual: Any, expected: Any) -> bool:
         return False
 
 
-def _invoke_in_process(code: str, fn_name: str, inp: Any, timeout: int) -> tuple[bool, Any, str]:
+def _invoke_in_process(
+    code: str, fn_name: str, inp: Any, timeout: int
+) -> tuple[bool, Any, str, float]:
     """Run user code in a fresh subprocess (no Docker)."""
     payload = json.dumps({"code": code, "fn": fn_name, "inp": inp})
     prog = r"""
-import json, sys, traceback
+import json, sys, traceback, time
 p = json.loads(sys.stdin.read())
 code, fn_name, inp = p["code"], p["fn"], p["inp"]
 try:
+    t0 = time.perf_counter()
     g = {}
     exec(compile(code, "<llm>", "exec"), g, g)
     fn = g[fn_name]
@@ -82,9 +88,11 @@ try:
         out = fn(**inp)
     else:
         out = fn(inp)
-    json.dump({"ok": True, "out": out}, sys.stdout, default=str)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": out, "runtime_ms": (t1 - t0) * 1000.0}, sys.stdout, default=str)
 except Exception:
-    json.dump({"ok": False, "err": traceback.format_exc()}, sys.stdout)
+    t1 = time.perf_counter()
+    json.dump({"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0}, sys.stdout)
 """
     try:
         proc = subprocess.run(
@@ -95,7 +103,7 @@ except Exception:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return False, None, "timeout"
+        return False, None, "timeout", float(timeout) * 1000.0
     raw = proc.stdout.decode("utf-8", errors="replace").strip()
     if not raw:
         err = proc.stderr.decode("utf-8", errors="replace")
@@ -103,14 +111,128 @@ except Exception:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return False, None, raw[:2000]
+        return False, None, raw[:2000], 0.0
     if data.get("ok"):
-        return True, data.get("out"), ""
-    return False, None, str(data.get("err", ""))
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0)
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+    )
+
+
+def _invoke_in_process_trace(
+    code: str, fn_name: str, inp: Any, timeout: int, max_events: int = 200
+) -> tuple[bool, Any, str, float, str]:
+    """Run user code and capture a lightweight line-by-line trace for the target function.
+
+    Trace is best-effort: it records at most `max_events` line events and a small
+    snapshot of locals (repr-truncated).
+    """
+    payload = json.dumps(
+        {"code": code, "fn": fn_name, "inp": inp, "max_events": int(max_events)}
+    )
+    prog = r"""
+import json, sys, traceback, time
+p = json.loads(sys.stdin.read())
+code, fn_name, inp = p["code"], p["fn"], p["inp"]
+max_events = int(p.get("max_events", 200))
+
+events = []
+def _safe_repr(x, limit=200):
+    try:
+        s = repr(x)
+    except Exception:
+        s = "<unrepr>"
+    return s if len(s) <= limit else s[:limit] + "…"
+
+def tracer(frame, event, arg):
+    if frame.f_code.co_filename != "<llm>":
+        return tracer
+    if frame.f_code.co_name != fn_name:
+        return tracer
+    if event == "line":
+        if len(events) < max_events:
+            loc = {k: _safe_repr(v) for k, v in frame.f_locals.items() if not k.startswith("__")}
+            events.append({"line": frame.f_lineno, "locals": loc})
+        return tracer
+    return tracer
+
+try:
+    t0 = time.perf_counter()
+    g = {}
+    exec(compile(code, "<llm>", "exec"), g, g)
+    fn = g[fn_name]
+    sys.settrace(tracer)
+    if isinstance(inp, dict):
+        out = fn(**inp)
+    else:
+        out = fn(inp)
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": out, "runtime_ms": (t1 - t0) * 1000.0, "trace": events}, sys.stdout, default=str)
+except Exception:
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0, "trace": events}, sys.stdout, default=str)
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", prog],
+            input=payload.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, None, "timeout", float(timeout) * 1000.0, ""
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        return False, None, err or "empty stdout", 0.0, ""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, None, raw[:2000], 0.0, ""
+
+    trace = json.dumps(data.get("trace") or [], ensure_ascii=False)
+    if data.get("ok"):
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0), trace
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+        trace,
+    )
+
+
+def _classify_error(err: str) -> str:
+    if not err:
+        return ""
+    e = err.lower()
+    if "timeout" in e:
+        return "timeout"
+    if "syntaxerror" in e or "indentationerror" in e:
+        return "compilation_error"
+    if "nameerror" in e or "importerror" in e or "modulenotfounderror" in e:
+        return "api_misuse"
+    return "runtime_error"
 
 
 class _LLMClient:
     def __init__(self, config: dict):
+        try:
+            from openai import AuthenticationError, OpenAI  # type: ignore
+        except ModuleNotFoundError as e:  # pragma: no cover
+            raise ModuleNotFoundError(
+                "缺少依赖 `openai`，Phase 2/3 需要安装：\n"
+                "  pip install openai\n"
+                "Phase 1 不需要该依赖。"
+            ) from e
+
+        self._AuthenticationError = AuthenticationError
         llm = config.get("llm", {})
         api_key = llm.get("api_key")
         if not api_key:
@@ -121,6 +243,9 @@ class _LLMClient:
         kwargs: dict = {"api_key": api_key}
         if base:
             kwargs["base_url"] = str(base).rstrip("/")
+        # Add a conservative request timeout to avoid hanging forever.
+        # OpenAI SDK uses httpx under the hood; `timeout` is forwarded.
+        kwargs.setdefault("timeout", float(llm.get("request_timeout_sec", 60)))
         self._client = OpenAI(**kwargs)
         self._model = llm.get("default_model", "gpt-4o")
         self._temperature = float(llm.get("temperature", 0.2))
@@ -138,16 +263,17 @@ class _LLMClient:
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
             )
-        except AuthenticationError as e:
-            err_text = str(e).upper()
-            if "HMAC" in err_text:
-                raise ValueError(
-                    "讯飞返回 401（HMAC 不匹配）：OPENAI_API_KEY 必须是控制台里「HTTP 服务接口」的 "
-                    "**APIPassword**，不要把 WebSocket 的 APIKey 或 APISecret 单独当密码填。"
-                    "若你只有 APIKey + APISecret，请在 .env 设置 IFLYTEK_SPARK_API_KEY 与 "
-                    "IFLYTEK_SPARK_API_SECRET（会自动拼成 APIKey:APISecret），并按讯飞文档把 "
-                    "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
-                ) from e
+        except Exception as e:  # noqa: BLE001
+            if isinstance(e, self._AuthenticationError):
+                err_text = str(e).upper()
+                if "HMAC" in err_text:
+                    raise ValueError(
+                        "讯飞返回 401（HMAC 不匹配）：OPENAI_API_KEY 必须是控制台里「HTTP 服务接口」的 "
+                        "**APIPassword**，不要把 WebSocket 的 APIKey 或 APISecret 单独当密码填。"
+                        "若你只有 APIKey + APISecret，请在 .env 设置 IFLYTEK_SPARK_API_KEY 与 "
+                        "IFLYTEK_SPARK_API_SECRET（会自动拼成 APIKey:APISecret），并按讯飞文档把 "
+                        "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
+                    ) from e
             raise
         return (resp.choices[0].message.content or "").strip()
 
@@ -174,7 +300,7 @@ class ExecutionRunner:
                 fn = _func_name(task.function_signature)
                 results: list[TestResult] = []
                 for case in suite.cases:
-                    ok, out, err = _invoke_in_process(
+                    ok, out, err, runtime_ms = _invoke_in_process(
                         code, fn, case.input, self.timeout
                     )
                     passed = ok and _outputs_equal(out, case.expected_output)
@@ -182,8 +308,14 @@ class ExecutionRunner:
                         TestResult(
                             test_id=case.test_id,
                             passed=passed,
+                            kind=case.kind,
+                            expected_output=case.expected_output,
                             actual_output=out if ok else None,
                             error="" if passed else (err or f"got {out!r}"),
+                            runtime_ms=runtime_ms,
+                            error_type=(
+                                "" if passed else (_classify_error(err) if err else "logical_bug")
+                            ),
                         )
                     )
                 n = len(results)

@@ -1,9 +1,72 @@
-{"test_id": "basic_001_ex0", "task_id": "basic_001", "input": [3, 1, 2], "expected_output": [1, 2, 3], "kind": "standard"}
-{"test_id": "basic_002_ex0", "task_id": "basic_002", "input": "abc", "expected_output": "cba", "kind": "standard"}
-{"test_id": "basic_003_ex0", "task_id": "basic_003", "input": "Racecar", "expected_output": true, "kind": "standard"}
-{"test_id": "medium_001_ex0", "task_id": "medium_001", "input": 12.5, "expected_output": "$12.50", "kind": "standard"}
-{"test_id": "medium_002_ex0", "task_id": "medium_002", "input": "a@b.com", "expected_output": true, "kind": "standard"}
-{"test_id": "medium_003_ex0", "task_id": "medium_003", "input": "a, b, c", "expected_output": ["a", "b", "c"], "kind": "standard"}
-{"test_id": "complex_001_ex0", "task_id": "complex_001", "input": {"a": [1, 3], "b": [2, 4]}, "expected_output": [1, 2, 3, 4], "kind": "standard"}
-{"test_id": "complex_002_ex0", "task_id": "complex_002", "input": [[0, 2], [2, 4]], "expected_output": false, "kind": "standard"}
-{"test_id": "complex_003_ex0", "task_id": "complex_003", "input": [[[1, 2], 3, [4]]], "expected_output": [1, 2, 3, 4], "kind": "standard"}
+{"test_id": "basic_001_std0", "task_id": "basic_001", "input": [3, 1, 2], "expected_output": [1, 2, 3], "kind": "standard"}
+{"test_id": "basic_001_std1", "task_id": "basic_001", "input": [], "expected_output": [], "kind": "standard"}
+{"test_id": "basic_001_std2", "task_id": "basic_001", "input": [1], "expected_output": [1], "kind": "standard"}
+{"test_id": "basic_001_std3", "task_id": "basic_001", "input": [2, 2, 1], "expected_output": [1, 2, 2], "kind": "standard"}
+{"test_id": "basic_001_std4", "task_id": "basic_001", "input": [-1, 3, 0], "expected_output": [-1, 0, 3], "kind": "standard"}
+{"test_id": "basic_001_adv0", "task_id": "basic_001", "input": [0, -1, -1, 2], "expected_output": [-1, -1, 0, 2], "kind": "adversarial"}
+{"test_id": "basic_001_adv1", "task_id": "basic_001", "input": [10, 9, 8, 7, 6, 5], "expected_output": [5, 6, 7, 8, 9, 10], "kind": "adversarial"}
+{"test_id": "basic_001_adv2", "task_id": "basic_001", "input": [1, 0, 1, 0, 1], "expected_output": [0, 0, 1, 1, 1], "kind": "adversarial"}
+{"test_id": "basic_002_std0", "task_id": "basic_002", "input": "abc", "expected_output": "cba", "kind": "standard"}
+{"test_id": "basic_002_std1", "task_id": "basic_002", "input": "", "expected_output": "", "kind": "standard"}
+{"test_id": "basic_002_std2", "task_id": "basic_002", "input": "a", "expected_output": "a", "kind": "standard"}
+{"test_id": "basic_002_std3", "task_id": "basic_002", "input": "ab cd", "expected_output": "dc ba", "kind": "standard"}
+{"test_id": "basic_002_std4", "task_id": "basic_002", "input": "你好", "expected_output": "好你", "kind": "standard"}
+{"test_id": "basic_002_adv0", "task_id": "basic_002", "input": "🙂🙃", "expected_output": "🙃🙂", "kind": "adversarial"}
+{"test_id": "basic_002_adv1", "task_id": "basic_002", "input": "á", "expected_output": "́a", "kind": "adversarial"}
+{"test_id": "basic_002_adv2", "task_id": "basic_002", "input": "line1\nline2", "expected_output": "2enil\n1enil", "kind": "adversarial"}
+{"test_id": "basic_003_std0", "task_id": "basic_003", "input": "Racecar", "expected_output": true, "kind": "standard"}
+{"test_id": "basic_003_std1", "task_id": "basic_003", "input": "", "expected_output": true, "kind": "standard"}
+{"test_id": "basic_003_std2", "task_id": "basic_003", "input": "A man, a plan, a canal: Panama", "expected_output": true, "kind": "standard"}
+{"test_id": "basic_003_std3", "task_id": "basic_003", "input": "hello", "expected_output": false, "kind": "standard"}
+{"test_id": "basic_003_std4", "task_id": "basic_003", "input": "No 'x' in Nixon", "expected_output": true, "kind": "standard"}
+{"test_id": "basic_003_adv0", "task_id": "basic_003", "input": "!!!", "expected_output": true, "kind": "adversarial"}
+{"test_id": "basic_003_adv1", "task_id": "basic_003", "input": "0P", "expected_output": false, "kind": "adversarial"}
+{"test_id": "basic_003_adv2", "task_id": "basic_003", "input": "Was it a car or a cat I saw?", "expected_output": true, "kind": "adversarial"}
+{"test_id": "medium_001_std0", "task_id": "medium_001", "input": 12.5, "expected_output": "$12.50", "kind": "standard"}
+{"test_id": "medium_001_std1", "task_id": "medium_001", "input": 0.0, "expected_output": "$0.00", "kind": "standard"}
+{"test_id": "medium_001_std2", "task_id": "medium_001", "input": 12.345, "expected_output": "$12.35", "kind": "standard"}
+{"test_id": "medium_001_std3", "task_id": "medium_001", "input": -1.2, "expected_output": "$-1.20", "kind": "standard"}
+{"test_id": "medium_001_std4", "task_id": "medium_001", "input": 1000000.1, "expected_output": "$1000000.10", "kind": "standard"}
+{"test_id": "medium_001_adv0", "task_id": "medium_001", "input": 1e-09, "expected_output": "$0.00", "kind": "adversarial"}
+{"test_id": "medium_001_adv1", "task_id": "medium_001", "input": 9999999999.999, "expected_output": "$10000000000.00", "kind": "adversarial"}
+{"test_id": "medium_001_adv2", "task_id": "medium_001", "input": -0.004, "expected_output": "$-0.00", "kind": "adversarial"}
+{"test_id": "medium_002_std0", "task_id": "medium_002", "input": "a@b.com", "expected_output": true, "kind": "standard"}
+{"test_id": "medium_002_std1", "task_id": "medium_002", "input": "a@b", "expected_output": false, "kind": "standard"}
+{"test_id": "medium_002_std2", "task_id": "medium_002", "input": "a@@b.com", "expected_output": false, "kind": "standard"}
+{"test_id": "medium_002_std3", "task_id": "medium_002", "input": "@b.com", "expected_output": true, "kind": "standard"}
+{"test_id": "medium_002_std4", "task_id": "medium_002", "input": "a@.com", "expected_output": true, "kind": "standard"}
+{"test_id": "medium_002_adv0", "task_id": "medium_002", "input": "a@b.c", "expected_output": true, "kind": "adversarial"}
+{"test_id": "medium_002_adv1", "task_id": "medium_002", "input": "a@b..com", "expected_output": true, "kind": "adversarial"}
+{"test_id": "medium_002_adv2", "task_id": "medium_002", "input": "no-at-symbol.com", "expected_output": false, "kind": "adversarial"}
+{"test_id": "medium_003_std0", "task_id": "medium_003", "input": "a, b, c", "expected_output": ["a", "b", "c"], "kind": "standard"}
+{"test_id": "medium_003_std1", "task_id": "medium_003", "input": " a ,b,c ", "expected_output": ["a", "b", "c"], "kind": "standard"}
+{"test_id": "medium_003_std2", "task_id": "medium_003", "input": "", "expected_output": [""], "kind": "standard"}
+{"test_id": "medium_003_std3", "task_id": "medium_003", "input": "a,,c", "expected_output": ["a", "", "c"], "kind": "standard"}
+{"test_id": "medium_003_std4", "task_id": "medium_003", "input": "a", "expected_output": ["a"], "kind": "standard"}
+{"test_id": "medium_003_adv0", "task_id": "medium_003", "input": " a , \"b\" , c ", "expected_output": ["a", "\"b\"", "c"], "kind": "adversarial"}
+{"test_id": "medium_003_adv1", "task_id": "medium_003", "input": ",", "expected_output": ["", ""], "kind": "adversarial"}
+{"test_id": "medium_003_adv2", "task_id": "medium_003", "input": "a, b, c, ", "expected_output": ["a", "b", "c", ""], "kind": "adversarial"}
+{"test_id": "complex_001_std0", "task_id": "complex_001", "input": {"a": [1, 3], "b": [2, 4]}, "expected_output": [1, 2, 3, 4], "kind": "standard"}
+{"test_id": "complex_001_std1", "task_id": "complex_001", "input": {"a": [], "b": []}, "expected_output": [], "kind": "standard"}
+{"test_id": "complex_001_std2", "task_id": "complex_001", "input": {"a": [1, 2], "b": []}, "expected_output": [1, 2], "kind": "standard"}
+{"test_id": "complex_001_std3", "task_id": "complex_001", "input": {"a": [], "b": [0]}, "expected_output": [0], "kind": "standard"}
+{"test_id": "complex_001_std4", "task_id": "complex_001", "input": {"a": [1, 1], "b": [1]}, "expected_output": [1, 1, 1], "kind": "standard"}
+{"test_id": "complex_001_adv0", "task_id": "complex_001", "input": {"a": [-3, -1], "b": [-2, 0]}, "expected_output": [-3, -2, -1, 0], "kind": "adversarial"}
+{"test_id": "complex_001_adv1", "task_id": "complex_001", "input": {"a": [1, 4, 4], "b": [2, 4]}, "expected_output": [1, 2, 4, 4, 4], "kind": "adversarial"}
+{"test_id": "complex_001_adv2", "task_id": "complex_001", "input": {"a": [], "b": [1, 2, 3]}, "expected_output": [1, 2, 3], "kind": "adversarial"}
+{"test_id": "complex_002_std0", "task_id": "complex_002", "input": [[0, 2], [2, 4]], "expected_output": false, "kind": "standard"}
+{"test_id": "complex_002_std1", "task_id": "complex_002", "input": [[0, 2], [1, 3]], "expected_output": true, "kind": "standard"}
+{"test_id": "complex_002_std2", "task_id": "complex_002", "input": [], "expected_output": false, "kind": "standard"}
+{"test_id": "complex_002_std3", "task_id": "complex_002", "input": [[5, 7]], "expected_output": false, "kind": "standard"}
+{"test_id": "complex_002_std4", "task_id": "complex_002", "input": [[1, 10], [2, 3], [11, 12]], "expected_output": true, "kind": "standard"}
+{"test_id": "complex_002_adv0", "task_id": "complex_002", "input": [[1, 2], [2, 2]], "expected_output": false, "kind": "adversarial"}
+{"test_id": "complex_002_adv1", "task_id": "complex_002", "input": [[1, 3], [3, 3], [2, 4]], "expected_output": true, "kind": "adversarial"}
+{"test_id": "complex_002_adv2", "task_id": "complex_002", "input": [[3, 5], [1, 2], [2, 3]], "expected_output": false, "kind": "adversarial"}
+{"test_id": "complex_003_std0", "task_id": "complex_003", "input": [[1, 2], 3, [4]], "expected_output": [1, 2, 3, 4], "kind": "standard"}
+{"test_id": "complex_003_std1", "task_id": "complex_003", "input": [], "expected_output": [], "kind": "standard"}
+{"test_id": "complex_003_std2", "task_id": "complex_003", "input": [1, 2, 3], "expected_output": [1, 2, 3], "kind": "standard"}
+{"test_id": "complex_003_std3", "task_id": "complex_003", "input": [[1], [2], [3]], "expected_output": [1, 2, 3], "kind": "standard"}
+{"test_id": "complex_003_std4", "task_id": "complex_003", "input": [[1, [2, 3]], 4], "expected_output": [1, [2, 3], 4], "kind": "standard"}
+{"test_id": "complex_003_adv0", "task_id": "complex_003", "input": [[[]], []], "expected_output": [[], []], "kind": "adversarial"}
+{"test_id": "complex_003_adv1", "task_id": "complex_003", "input": [[1, 2], [3, 4], 5], "expected_output": [1, 2, 3, 4, 5], "kind": "adversarial"}
+{"test_id": "complex_003_adv2", "task_id": "complex_003", "input": [[[1]], [[2]]], "expected_output": [[1], [2]], "kind": "adversarial"}
