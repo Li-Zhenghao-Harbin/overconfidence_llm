@@ -14,6 +14,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from src.module4_analysis.statistical_tests import AnalysisReport
+from src.utils import pipeline_io as pio
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,11 @@ class ResultVisualizer:
         self.config = config
 
     def generate_all_figures(self, stats: AnalysisReport) -> None:
-        fig_dir = Path("results/figures")
+        out = self.config.get("outputs") or {}
+        fig_dir = Path(out.get("figures_dir", "results/figures"))
         fig_dir.mkdir(parents=True, exist_ok=True)
 
-        tables_dir = Path("results/tables")
+        tables_dir = Path(out.get("tables_dir", "results/tables"))
         summary_path = tables_dir / "summary_metrics.csv"
         round_path = tables_dir / "round_summary.csv"
 
@@ -45,7 +47,7 @@ class ResultVisualizer:
         self._hallucination_heatmap(fig_dir / "hallucination_heatmap.png")
         self._confusion_matrix_oc(fig_dir / "confusion_matrix_oc.png")
 
-        logger.info("Figures generated under results/figures/")
+        logger.info("Figures generated under %s/", fig_dir)
 
     def _ogs_by_condition(self, df: pd.DataFrame, out: Path) -> None:
         # Aggregate across complexity
@@ -109,8 +111,12 @@ class ResultVisualizer:
             return rows
 
         # Baseline (needs annotations)
-        base = read_jsonl(Path("data/processed/baseline_results.jsonl"))
-        ann = {r["sample_id"]: r.get("assertiveness_level") for r in read_jsonl(Path("data/annotations/auto_annotations.jsonl")) if "sample_id" in r}
+        base = read_jsonl(pio.baseline_results_path())
+        ann = {
+            r["sample_id"]: r.get("assertiveness_level")
+            for r in read_jsonl(pio.auto_annotations_path())
+            if "sample_id" in r
+        }
         base_rows = []
         for r in base:
             base_rows.append(
@@ -121,7 +127,7 @@ class ResultVisualizer:
                 }
             )
 
-        strat = read_jsonl(Path("data/processed/strategy_execution_records.jsonl"))
+        strat = read_jsonl(pio.strategy_execution_records_path())
         df_s = pd.DataFrame(strat)
         if not df_s.empty:
             # final round per task×cond
@@ -174,7 +180,7 @@ class ResultVisualizer:
         """Mean rounds to reach correctness for C2/C3 (−1 excluded)."""
         import json
 
-        p = Path("data/processed/strategy_execution_records.jsonl")
+        p = pio.strategy_execution_records_path()
         if not p.is_file():
             return
         rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -225,9 +231,9 @@ class ResultVisualizer:
 
     def _hallucination_heatmap(self, out: Path) -> None:
         """Heatmap: error_type × condition frequency (final round only for strategies)."""
-        baseline = self._read_jsonl(Path("data/processed/baseline_results.jsonl"))
+        baseline = self._read_jsonl(pio.baseline_results_path())
 
-        strat = self._read_jsonl(Path("data/processed/strategy_execution_records.jsonl"))
+        strat = self._read_jsonl(pio.strategy_execution_records_path())
         df_s = pd.DataFrame(strat)
         if not df_s.empty:
             df_s = (
@@ -296,11 +302,11 @@ class ResultVisualizer:
     def _confusion_matrix_oc(self, out: Path) -> None:
         """Confusion matrix for OC detection: predicted assertiveness vs actual incorrect."""
         # Baseline C0: pull assertiveness from auto_annotations
-        baseline = self._read_jsonl(Path("data/processed/baseline_results.jsonl"))
-        ann_rows = self._read_jsonl(Path("data/annotations/auto_annotations.jsonl"))
+        baseline = self._read_jsonl(pio.baseline_results_path())
+        ann_rows = self._read_jsonl(pio.auto_annotations_path())
         ann_map = {r.get("sample_id"): r.get("assertiveness_level") for r in ann_rows}
 
-        strat = self._read_jsonl(Path("data/processed/strategy_execution_records.jsonl"))
+        strat = self._read_jsonl(pio.strategy_execution_records_path())
         df_s = pd.DataFrame(strat)
         if not df_s.empty:
             df_s = (

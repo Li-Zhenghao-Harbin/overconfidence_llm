@@ -6,6 +6,9 @@ execution:
 tasks:
   task_file: data/raw/tasks.jsonl
   tasks_per_level: 3
+  # 原始数据文件名：null = 使用上面的 task_file / 自动推导 suite_file（会覆盖同路径文件）
+  # auto = 使用 tasks_{dataset}_{首个baseline模型名}.jsonl + test_suites_{...}.jsonl，避免覆盖默认文件
+  raw_run_id: null
   # builtin: use built-in 9 tasks (or existing tasks.jsonl if present)
   # humaneval: auto-download HumanEval into task_file before phases that need tasks
   dataset: humaneval
@@ -13,6 +16,11 @@ tasks:
     url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
     limit: 0
     always_refresh: false
+
+# Phase 2–4 落盘与图表目录。省略或与 raw 联动：tasks.raw_run_id 为 auto/自定义时，默认用同一 slug 子目录，避免多模型互相覆盖。
+# run_id: flat = 强制写回 data/processed 与 results 根目录；run_id: auto = 仅用 dataset+模型名子目录（raw 仍可为默认 tasks.jsonl）。
+outputs:
+  run_id: null
 
 annotation:
   kappa_threshold: 0.7

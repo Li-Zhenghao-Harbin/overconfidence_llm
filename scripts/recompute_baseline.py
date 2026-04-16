@@ -23,7 +23,7 @@ from src.module2_detection.execution_runner import (
     _outputs_equal,
 )
 from src.utils.config import load_config
-from src.utils.pipeline_io import save_baseline_results
+from src.utils.pipeline_io import baseline_results_path, save_baseline_results
 
 
 def main() -> None:
@@ -33,10 +33,10 @@ def main() -> None:
     tasks = TaskManager(cfg).load_tasks()
     suites = TestSuiteBuilder(cfg).build_all(tasks)
 
-    in_path = "data/processed/baseline_results.jsonl"
+    in_path = baseline_results_path()
     rows = [
         json.loads(line)
-        for line in open(in_path, encoding="utf-8")  # noqa: PTH123
+        for line in open(in_path, encoding="utf-8")  # noqa: PTH123, SIM115
         if line.strip()
     ]
     by_task = {r["task_id"]: r for r in rows}
@@ -72,7 +72,7 @@ def main() -> None:
         new_rows.append(r)
 
     save_baseline_results(new_rows)
-    print(f"Recomputed baseline for {len(new_rows)} tasks -> {in_path}")
+    print(f"Recomputed baseline for {len(new_rows)} tasks -> {baseline_results_path()}")
 
 
 if __name__ == "__main__":

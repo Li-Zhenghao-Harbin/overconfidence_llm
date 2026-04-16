@@ -62,14 +62,14 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 
 | Path | Contents |
 |---|---|
-| `data/raw/tasks.jsonl` | Task benchmark used in this run (either the built-in 9 tasks or an imported dataset such as HumanEval) |
-| `data/raw/test_suites.jsonl` | Standard + adversarial test cases per task (used for execution correctness) |
-| `data/processed/baseline_results.jsonl` | C0 execution records |
-| `data/processed/strategy_results.jsonl` | C1/C2/C3 strategy results (one row per task×condition; includes all rounds) |
-| `data/processed/strategy_execution_records.jsonl` | C1/C2/C3 execution records (one row per round; convenient for RQ3 + plotting) |
-| `data/annotations/` | Human annotation CSV files + auto-annotation JSONL |
-| `results/figures/` | All generated plots (PNG + PDF) |
-| `results/tables/` | Statistical test result tables (CSV + LaTeX) |
+| `data/raw/tasks*.jsonl` | Task benchmark used in this run (either the built-in 9 tasks or an imported dataset such as HumanEval). Exact filename comes from `tasks.task_file` / `tasks.raw_run_id` (see §3.5). |
+| `data/raw/test_suites*.jsonl` | Standard + adversarial (or HumanEval bundled) test cases per task. Exact filename from `tasks.suite_file` (auto-derived when using `raw_run_id`). |
+| `data/processed/…/baseline_results.jsonl` | C0 execution records (default: `data/processed/`; with run slug: `data/processed/{slug}/`, see §3.6) |
+| `data/processed/…/strategy_results.jsonl` | C1/C2/C3 strategy results (one row per task×condition; includes all rounds) |
+| `data/processed/…/strategy_execution_records.jsonl` | C1/C2/C3 execution records (one row per round; convenient for RQ3 + plotting) |
+| `data/annotations/…/` | Human annotation CSV files + `auto_annotations.jsonl` (mirrors the same `{slug}` subfolder when versioned) |
+| `results/…/figures/` | All generated plots (PNG + PDF) |
+| `results/…/tables/` | Statistical test result tables (CSV + LaTeX) |
 | `results/logs/pipeline.log` | Full execution log |
 
 ---
@@ -136,7 +136,27 @@ TestSuiteBuilder.build_all(tasks)
             └── _logical_trap_cases()
             │
             ▼
-    Save → data/raw/test_suites.jsonl
+    Save → `tasks.suite_file` (paired with `tasks.task_file`; often `data/raw/test_suites*.jsonl`)
+```
+
+### 3.6 Versioned processed / results / annotations (`outputs.run_id`)
+
+When comparing **multiple models** (or multiple runs), Phase 2–4 outputs should not all write to the same files. The pipeline resolves directories after loading YAML:
+
+| `outputs.run_id` | Behaviour |
+|---|---|
+| `null` / omitted | If `tasks.raw_run_id` versions raw files (`auto` or a custom string), use the **same slug** under `data/processed/`, `results/`, `data/annotations/`, and `data/intermediate/`. If raw is flat (`raw_run_id` null), outputs stay flat (legacy layout). |
+| `auto` | Always use `{dataset}_{first_baseline_name_or_model_slug}` as the subdirectory name, even when raw paths are flat. |
+| `flat` | Always use the repository root dirs (`data/processed`, `results`, …) even if raw is versioned. |
+| other string | Custom slug (same rules as `tasks.raw_run_id` custom string). |
+
+Example (recommended for multi-model studies — set both to `auto`):
+
+```yaml
+tasks:
+  raw_run_id: auto
+outputs:
+  run_id: null   # inherit slug from raw; or set run_id: auto explicitly
 ```
 
 HumanEval integration (conceptual):
@@ -154,6 +174,7 @@ HumanEval integration (conceptual):
 tasks:
   task_file: data/raw/tasks.jsonl
   dataset: humaneval   # builtin | humaneval
+  raw_run_id: auto      # null=使用 task_file 固定路径（会覆盖同文件）；auto=dataset+模型名新文件；也可写任意字符串作后缀
   humaneval:
     url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
     limit: 0           # >0 时只导入前 N 题（smoke test）

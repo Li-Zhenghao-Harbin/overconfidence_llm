@@ -18,6 +18,8 @@ import pandas as pd
 from scipy.stats import chi2_contingency, fisher_exact
 from statsmodels.stats.contingency_tables import StratifiedTable
 
+from src.utils import pipeline_io as pio
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +54,7 @@ class StatisticalAnalyzer:
         strategy_results: dict[str, list],
     ) -> AnalysisReport:
         # Load raw dataframes
-        df_tasks = _load_tasks()
+        df_tasks = _load_tasks(self.config)
         df_c0 = _baseline_to_df(baseline_results, df_tasks)
         df_strat_final, df_strat_rounds = _strategy_to_df(df_tasks)
 
@@ -67,8 +69,9 @@ class StatisticalAnalyzer:
         out.rq3 = _rq3_feedback_calibration(df_strat_rounds, alpha=self.alpha)
         out.rq4 = _rq4_complexity_moderation(df_final, alpha=self.alpha)
 
-        _export_tables(out, df_final, df_strat_rounds)
-        logger.info("Statistical analysis exported to results/tables/")
+        _export_tables(out, df_final, df_strat_rounds, self.config)
+        td = (self.config.get("outputs") or {}).get("tables_dir", "results/tables")
+        logger.info("Statistical analysis exported to %s/", td)
         return out
 
 
@@ -85,8 +88,9 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _load_tasks() -> pd.DataFrame:
-    rows = _load_jsonl(Path("data/raw/tasks.jsonl"))
+def _load_tasks(cfg: dict) -> pd.DataFrame:
+    tf = (cfg.get("tasks") or {}).get("task_file", "data/raw/tasks.jsonl")
+    rows = _load_jsonl(Path(tf))
     if not rows:
         return pd.DataFrame(columns=["task_id", "complexity"])
     df = pd.DataFrame(rows)
@@ -96,7 +100,7 @@ def _load_tasks() -> pd.DataFrame:
 
 
 def _load_baseline_annotations() -> pd.DataFrame:
-    rows = _load_jsonl(Path("data/annotations/auto_annotations.jsonl"))
+    rows = _load_jsonl(pio.auto_annotations_path())
     if not rows:
         return pd.DataFrame(columns=["sample_id", "assertiveness_level"])
     df = pd.DataFrame(rows)
@@ -132,7 +136,7 @@ def _baseline_to_df(baseline_results: list[dict], df_tasks: pd.DataFrame) -> pd.
 
 
 def _strategy_to_df(df_tasks: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    rows = _load_jsonl(Path("data/processed/strategy_execution_records.jsonl"))
+    rows = _load_jsonl(pio.strategy_execution_records_path())
     df = pd.DataFrame(rows)
     if df.empty:
         empty_final = pd.DataFrame(
@@ -406,8 +410,13 @@ def _rq4_complexity_moderation(df_final: pd.DataFrame, alpha: float) -> list[Tes
     return reps
 
 
-def _export_tables(report: AnalysisReport, df_final: pd.DataFrame, df_rounds: pd.DataFrame) -> None:
-    tables_dir = Path("results/tables")
+def _export_tables(
+    report: AnalysisReport,
+    df_final: pd.DataFrame,
+    df_rounds: pd.DataFrame,
+    cfg: dict,
+) -> None:
+    tables_dir = Path((cfg.get("outputs") or {}).get("tables_dir", "results/tables"))
     tables_dir.mkdir(parents=True, exist_ok=True)
 
     def export_testreports(name: str, items: list[TestReport]) -> None:

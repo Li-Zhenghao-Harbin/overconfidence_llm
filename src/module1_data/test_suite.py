@@ -32,7 +32,8 @@ class TestSuite:
 class TestSuiteBuilder:
     def __init__(self, config: dict):
         self.config = config
-        self.suite_file = Path("data/raw/test_suites.jsonl")
+        sf = (config.get("tasks") or {}).get("suite_file")
+        self.suite_file = Path(sf) if sf else Path("data/raw/test_suites.jsonl")
 
     def build_all(self, tasks: list[Task]) -> dict[str, TestSuite]:
         self.suite_file.parent.mkdir(parents=True, exist_ok=True)

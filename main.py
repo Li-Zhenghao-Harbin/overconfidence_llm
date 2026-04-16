@@ -94,7 +94,7 @@ def run_phase4(config, baseline_results, strategy_results, logger):
     visualizer = ResultVisualizer(config)
     visualizer.generate_all_figures(stats)
 
-    logger.info("Analysis complete. See results/ directory.")
+    logger.info("Analysis complete. See %s/", config.get("outputs", {}).get("results_dir", "results"))
     return stats
 
 
@@ -104,7 +104,13 @@ def main():
     logger = setup_logger(args.log_level)
 
     logger.info("OverconfidenceLens Pipeline Starting")
-    Path("results").mkdir(exist_ok=True)
+    out = config.get("outputs") or {}
+    Path(out.get("results_dir", "results")).mkdir(parents=True, exist_ok=True)
+    Path(out.get("tables_dir", "results/tables")).mkdir(parents=True, exist_ok=True)
+    Path(out.get("figures_dir", "results/figures")).mkdir(parents=True, exist_ok=True)
+    Path(out.get("processed_dir", "data/processed")).mkdir(parents=True, exist_ok=True)
+    Path(out.get("annotations_dir", "data/annotations")).mkdir(parents=True, exist_ok=True)
+    Path(out.get("intermediate_dir", "data/intermediate")).mkdir(parents=True, exist_ok=True)
 
     if args.phase in ("all", "1", "2", "3"):
         ensure_dataset_tasks(config, logger)
@@ -125,7 +131,8 @@ def main():
         logger.info("Loaded %d tasks for phase %s", len(tasks), args.phase)
 
     if args.phase in ("all", "2"):
-        assert tasks is not None, "Run Phase 1 first or ensure data/raw/tasks.jsonl exists"
+        tf = (config.get("tasks") or {}).get("task_file", "data/raw/tasks.jsonl")
+        assert tasks is not None, f"Run Phase 1 first or ensure tasks exist at {tf}"
         baseline_results, annotations, ogs_scores = run_phase2(config, tasks, logger)
         save_baseline_results(baseline_results)
 
@@ -140,10 +147,10 @@ def main():
         if strategy_results is None:
             strategy_results = load_strategy_results()
         assert baseline_results is not None, (
-            "Run Phase 2 first (or rerun it) so data/intermediate/phase2_baseline.jsonl exists"
+            "Run Phase 2 first (or rerun it) so baseline results exist under outputs.processed_dir"
         )
         assert strategy_results is not None, (
-            "Run Phase 3 first (or rerun it) so data/intermediate/phase3_strategy_results.json exists"
+            "Run Phase 3 first (or rerun it) so strategy results exist under outputs.processed_dir"
         )
         stats = run_phase4(config, baseline_results, strategy_results, logger)
 

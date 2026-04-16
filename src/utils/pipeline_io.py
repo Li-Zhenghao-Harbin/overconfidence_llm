@@ -6,13 +6,44 @@ import json
 from pathlib import Path
 from typing import Any
 
-BASELINE_JSONL = Path("data/processed/baseline_results.jsonl")
-STRATEGY_JSONL = Path("data/processed/strategy_results.jsonl")
-STRATEGY_EXECUTION_JSONL = Path("data/processed/strategy_execution_records.jsonl")
+_processed_dir = Path("data/processed")
+_results_dir = Path("results")
+_intermediate_dir = Path("data/intermediate")
+_annotations_dir = Path("data/annotations")
 
-# Back-compat (older runs / debugging)
-BASELINE_INTERMEDIATE_JSONL = Path("data/intermediate/phase2_baseline.jsonl")
-STRATEGY_INTERMEDIATE_JSON = Path("data/intermediate/phase3_strategy_results.json")
+
+def configure_from_config(cfg: dict) -> None:
+    """Call after `load_config` (or whenever paths in cfg change)."""
+    global _processed_dir, _results_dir, _intermediate_dir, _annotations_dir
+    out = cfg.get("outputs") or {}
+    _processed_dir = Path(out.get("processed_dir", "data/processed"))
+    _results_dir = Path(out.get("results_dir", "results"))
+    _intermediate_dir = Path(out.get("intermediate_dir", "data/intermediate"))
+    _annotations_dir = Path(out.get("annotations_dir", "data/annotations"))
+
+
+def baseline_results_path() -> Path:
+    return _processed_dir / "baseline_results.jsonl"
+
+
+def strategy_results_path() -> Path:
+    return _processed_dir / "strategy_results.jsonl"
+
+
+def strategy_execution_records_path() -> Path:
+    return _processed_dir / "strategy_execution_records.jsonl"
+
+
+def baseline_intermediate_path() -> Path:
+    return _intermediate_dir / "phase2_baseline.jsonl"
+
+
+def strategy_intermediate_path() -> Path:
+    return _intermediate_dir / "phase3_strategy_results.json"
+
+
+def auto_annotations_path() -> Path:
+    return _annotations_dir / "auto_annotations.jsonl"
 
 
 def _serialize_test_result(t: Any) -> dict[str, Any]:
@@ -35,16 +66,18 @@ def _baseline_row_to_jsonable(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_baseline_results(rows: list[dict[str, Any]]) -> None:
-    BASELINE_JSONL.parent.mkdir(parents=True, exist_ok=True)
-    with open(BASELINE_JSONL, "w", encoding="utf-8") as f:
+    path = baseline_results_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(
                 json.dumps(_baseline_row_to_jsonable(row), ensure_ascii=False, default=str)
                 + "\n"
             )
     # Also write the intermediate file for older tooling / quick inspection
-    BASELINE_INTERMEDIATE_JSONL.parent.mkdir(parents=True, exist_ok=True)
-    with open(BASELINE_INTERMEDIATE_JSONL, "w", encoding="utf-8") as f:
+    inter = baseline_intermediate_path()
+    inter.parent.mkdir(parents=True, exist_ok=True)
+    with open(inter, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(
                 json.dumps(_baseline_row_to_jsonable(row), ensure_ascii=False, default=str)
@@ -53,12 +86,12 @@ def save_baseline_results(rows: list[dict[str, Any]]) -> None:
 
 
 def load_baseline_results() -> list[dict[str, Any]] | None:
-    if not BASELINE_JSONL.is_file():
-        if not BASELINE_INTERMEDIATE_JSONL.is_file():
+    path = baseline_results_path()
+    if not path.is_file():
+        inter = baseline_intermediate_path()
+        if not inter.is_file():
             return None
-        path = BASELINE_INTERMEDIATE_JSONL
-    else:
-        path = BASELINE_JSONL
+        path = inter
     rows: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -71,19 +104,21 @@ def load_baseline_results() -> list[dict[str, Any]] | None:
 def save_strategy_results(data: dict[str, list[Any]]) -> None:
     from dataclasses import asdict, is_dataclass
 
-    STRATEGY_JSONL.parent.mkdir(parents=True, exist_ok=True)
+    sj = strategy_results_path()
+    sj.parent.mkdir(parents=True, exist_ok=True)
     # Save StrategyResult objects (one row per task × condition).
     rows: list[dict[str, Any]] = []
     for cond, items in (data or {}).items():
         for item in items or []:
             rows.append(asdict(item) if is_dataclass(item) else dict(item))
             rows[-1].setdefault("condition", cond)
-    with open(STRATEGY_JSONL, "w", encoding="utf-8") as f:
+    with open(sj, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
 
     # Also export a flat execution-record view (one row per round) for Phase 4.
-    STRATEGY_EXECUTION_JSONL.parent.mkdir(parents=True, exist_ok=True)
+    se = strategy_execution_records_path()
+    se.parent.mkdir(parents=True, exist_ok=True)
     flat: list[dict[str, Any]] = []
     for r in rows:
         cond = r.get("condition", "unknown")
@@ -109,24 +144,25 @@ def save_strategy_results(data: dict[str, list[Any]]) -> None:
                     "annotator_id": a.get("annotator_id", "auto_regex"),
                 }
             )
-    with open(STRATEGY_EXECUTION_JSONL, "w", encoding="utf-8") as f:
+    with open(se, "w", encoding="utf-8") as f:
         for row in flat:
             f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
 
     # Also keep the intermediate JSON blob for inspection
-    STRATEGY_INTERMEDIATE_JSON.parent.mkdir(parents=True, exist_ok=True)
+    blob = strategy_intermediate_path()
+    blob.parent.mkdir(parents=True, exist_ok=True)
     serializable: dict[str, Any] = {}
     for k, v in data.items():
         serializable[k] = [asdict(item) if is_dataclass(item) else item for item in v]
-    with open(STRATEGY_INTERMEDIATE_JSON, "w", encoding="utf-8") as f:
+    with open(blob, "w", encoding="utf-8") as f:
         json.dump(serializable, f, ensure_ascii=False, indent=2, default=str)
 
 
 def load_strategy_results() -> dict[str, list[Any]] | None:
-    # Prefer processed JSONL if available; fall back to intermediate JSON.
-    if STRATEGY_JSONL.is_file():
+    sj = strategy_results_path()
+    if sj.is_file():
         by_cond: dict[str, list[Any]] = {}
-        with open(STRATEGY_JSONL, encoding="utf-8") as f:
+        with open(sj, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -135,7 +171,8 @@ def load_strategy_results() -> dict[str, list[Any]] | None:
                 cond = row.get("condition", "unknown")
                 by_cond.setdefault(cond, []).append(row)
         return by_cond
-    if STRATEGY_INTERMEDIATE_JSON.is_file():
-        with open(STRATEGY_INTERMEDIATE_JSON, encoding="utf-8") as f:
+    blob = strategy_intermediate_path()
+    if blob.is_file():
+        with open(blob, encoding="utf-8") as f:
             return json.load(f)
     return None

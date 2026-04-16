@@ -75,7 +75,8 @@ class LinguisticAnnotator:
                     annotation_note=note,
                 )
             )
-        path = Path("data/annotations/auto_annotations.jsonl")
+        ann_dir = (self.config.get("outputs") or {}).get("annotations_dir", "data/annotations")
+        path = Path(ann_dir) / "auto_annotations.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             for a in out:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +13,25 @@ from dotenv import load_dotenv
 
 _DEFAULTS: dict[str, Any] = {
     "execution": {"sandbox": "subprocess"},
+    "outputs": {
+        # null / omit: follow `tasks.raw_run_id` when it versions raw data; else flat layout.
+        # "auto": always use `{dataset}_{baseline_slug}` subdirectory.
+        # "flat": force flat `data/processed` + `results` even if raw is versioned.
+        # other string: custom slug subdirectory.
+        "run_id": None,
+        "processed_dir": "data/processed",
+        "results_dir": "results",
+        "tables_dir": "results/tables",
+        "figures_dir": "results/figures",
+        "annotations_dir": "data/annotations",
+        "intermediate_dir": "data/intermediate",
+    },
     "tasks": {
         "task_file": "data/raw/tasks.jsonl",
+        "suite_file": None,
         "tasks_per_level": 3,
         "dataset": "builtin",
+        "raw_run_id": None,
         "humaneval": {
             "url": "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz",
             "limit": 0,
@@ -47,6 +63,110 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return base
 
 
+def _slug_label(s: str, max_len: int = 48) -> str:
+    s = (s or "x").lower().strip()
+    out: list[str] = []
+    for c in s:
+        if c.isalnum():
+            out.append(c)
+        else:
+            out.append("_")
+    slug = re.sub(r"_+", "_", "".join(out)).strip("_")
+    return (slug or "x")[:max_len]
+
+
+def resolve_auto_run_slug(cfg: dict) -> str:
+    """Same slug as `tasks.raw_run_id: auto` (dataset + first baseline model label)."""
+    t = cfg.setdefault("tasks", {})
+    ds = str(t.get("dataset", "builtin")).strip().lower() or "builtin"
+    models = (cfg.get("models") or {}).get("baseline") or []
+    label = ""
+    if models:
+        label = str(models[0].get("name") or models[0].get("model") or "")
+    if not label:
+        label = str((cfg.get("llm") or {}).get("default_model") or "model")
+    return f"{ds}_{_slug_label(label)}"
+
+
+def _derive_suite_file(task_file: Path) -> Path:
+    """Pair `tasks*.jsonl` with `test_suites*.jsonl` in the same directory."""
+    parent = task_file.parent
+    name = task_file.name
+    if name.startswith("tasks_") and name.endswith(".jsonl") and name != "tasks.jsonl":
+        mid = name[len("tasks_") : -len(".jsonl")]
+        return parent / f"test_suites_{mid}.jsonl"
+    return parent / "test_suites.jsonl"
+
+
+def apply_task_raw_paths(cfg: dict) -> None:
+    """Resolve `tasks.task_file` / `tasks.suite_file` from optional `raw_run_id`.
+
+    - `raw_run_id` unset / null / "": keep YAML `task_file` basename; set `suite_file` if missing.
+    - `raw_run_id: auto`: `tasks_{dataset}_{baseline_model_slug}.jsonl` (+ paired test_suites) under the
+      same directory as the configured `task_file` (directory only; default basename is ignored).
+    - other string: `tasks_{slug(raw_run_id)}.jsonl` (+ paired test_suites).
+    """
+    t = cfg.setdefault("tasks", {})
+    tf_in = Path(t.get("task_file", "data/raw/tasks.jsonl"))
+    parent = tf_in.parent
+    rid = t.get("raw_run_id")
+
+    if rid is None or (isinstance(rid, str) and not str(rid).strip()):
+        cfg["_run_slug"] = None
+        t["task_file"] = str(tf_in)
+        if not t.get("suite_file"):
+            t["suite_file"] = str(_derive_suite_file(tf_in))
+        return
+
+    rid_s = str(rid).strip()
+    if rid_s.lower() == "auto":
+        rid_use = resolve_auto_run_slug(cfg)
+    else:
+        rid_use = _slug_label(rid_s)
+
+    cfg["_run_slug"] = rid_use
+    t["task_file"] = str(parent / f"tasks_{rid_use}.jsonl")
+    t["suite_file"] = str(parent / f"test_suites_{rid_use}.jsonl")
+
+
+def apply_output_paths(cfg: dict) -> None:
+    """Set `outputs.*_dir` from `outputs.run_id` and optional coupling to `tasks.raw_run_id`.
+
+    - `outputs.run_id` null/empty: use `cfg['_run_slug']` when raw paths were versioned; else flat.
+    - `outputs.run_id: auto`: always `{dataset}_{baseline_slug}` (even if raw is flat).
+    - `outputs.run_id: flat`: always flat dirs regardless of raw.
+    - other string: slug subdirectory under `data/processed`, `results`, `data/annotations`,
+      `data/intermediate`.
+    """
+    o = cfg.setdefault("outputs", {})
+    out_rid = o.get("run_id")
+    slug: str | None
+
+    if isinstance(out_rid, str) and out_rid.strip().lower() == "flat":
+        slug = None
+    elif out_rid is None or (isinstance(out_rid, str) and not str(out_rid).strip()):
+        slug = cfg.get("_run_slug")
+    elif str(out_rid).strip().lower() == "auto":
+        slug = resolve_auto_run_slug(cfg)
+    else:
+        slug = _slug_label(str(out_rid).strip())
+
+    if not slug:
+        o["processed_dir"] = str(Path("data/processed"))
+        o["results_dir"] = str(Path("results"))
+        o["annotations_dir"] = str(Path("data/annotations"))
+        o["intermediate_dir"] = str(Path("data/intermediate"))
+    else:
+        o["processed_dir"] = str(Path("data/processed") / slug)
+        o["results_dir"] = str(Path("results") / slug)
+        o["annotations_dir"] = str(Path("data/annotations") / slug)
+        o["intermediate_dir"] = str(Path("data/intermediate") / slug)
+
+    rd = Path(o["results_dir"])
+    o["tables_dir"] = str(rd / "tables")
+    o["figures_dir"] = str(rd / "figures")
+
+
 def load_config(path: str | Path) -> dict[str, Any]:
     load_dotenv()
     p = Path(path)
@@ -73,5 +193,12 @@ def load_config(path: str | Path) -> dict[str, Any]:
     for m in cfg.get("models", {}).get("baseline", []) or []:
         if m.get("model") is None:
             m["model"] = llm.get("default_model")
+
+    apply_task_raw_paths(cfg)
+    apply_output_paths(cfg)
+
+    from src.utils.pipeline_io import configure_from_config
+
+    configure_from_config(cfg)
 
     return cfg
