@@ -25,6 +25,12 @@ from src.module4_analysis.statistical_tests import StatisticalAnalyzer
 from src.module4_analysis.visualizer import ResultVisualizer
 from src.utils.config import load_config
 from src.utils.logger import setup_logger
+from src.utils.pipeline_io import (
+    load_baseline_results,
+    load_strategy_results,
+    save_baseline_results,
+    save_strategy_results,
+)
 
 
 def parse_args():
@@ -117,14 +123,24 @@ def main():
     if args.phase in ("all", "2"):
         assert tasks is not None, "Run Phase 1 first or ensure data/raw/tasks.jsonl exists"
         baseline_results, annotations, ogs_scores = run_phase2(config, tasks, logger)
+        save_baseline_results(baseline_results)
 
     if args.phase in ("all", "3"):
         assert tasks is not None, "Run Phase 1 first"
         strategy_results = run_phase3(config, tasks, logger)
+        save_strategy_results(strategy_results)
 
     if args.phase in ("all", "4"):
-        assert baseline_results is not None, "Run Phase 2 first"
-        assert strategy_results is not None, "Run Phase 3 first"
+        if baseline_results is None:
+            baseline_results = load_baseline_results()
+        if strategy_results is None:
+            strategy_results = load_strategy_results()
+        assert baseline_results is not None, (
+            "Run Phase 2 first (or rerun it) so data/intermediate/phase2_baseline.jsonl exists"
+        )
+        assert strategy_results is not None, (
+            "Run Phase 3 first (or rerun it) so data/intermediate/phase3_strategy_results.json exists"
+        )
         stats = run_phase4(config, baseline_results, strategy_results, logger)
 
     logger.info("Pipeline complete.")
