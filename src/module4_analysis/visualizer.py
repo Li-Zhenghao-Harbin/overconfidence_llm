@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import json
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -40,6 +42,8 @@ class ResultVisualizer:
         # Additional figures derived from raw processed data (no re-running phases).
         self._calibration_curves(fig_dir / "calibration_curves.png")
         self._repair_efficiency(fig_dir / "repair_efficiency_bar.png")
+        self._hallucination_heatmap(fig_dir / "hallucination_heatmap.png")
+        self._confusion_matrix_oc(fig_dir / "confusion_matrix_oc.png")
 
         logger.info("Figures generated under results/figures/")
 
@@ -205,6 +209,152 @@ class ResultVisualizer:
         plt.xlabel("Condition")
         plt.ylabel("Mean rounds")
         plt.ylim(0, max(1.0, float(agg.max()) + 0.5))
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _read_jsonl(self, p: Path) -> list[dict]:
+        if not p.is_file():
+            return []
+        rows: list[dict] = []
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+        return rows
+
+    def _hallucination_heatmap(self, out: Path) -> None:
+        """Heatmap: error_type × condition frequency (final round only for strategies)."""
+        baseline = self._read_jsonl(Path("data/processed/baseline_results.jsonl"))
+
+        strat = self._read_jsonl(Path("data/processed/strategy_execution_records.jsonl"))
+        df_s = pd.DataFrame(strat)
+        if not df_s.empty:
+            df_s = (
+                df_s.sort_values(["condition", "model", "task_id", "round_number"])
+                .groupby(["condition", "model", "task_id"], as_index=False)
+                .tail(1)
+            )
+
+        # Aggregate per condition × error_type from failed test cases
+        conds = ["C0", "C1", "C2", "C3"]
+        all_error_types: set[str] = set()
+        counts: dict[str, dict[str, int]] = {c: {} for c in conds}
+
+        def add_from_records(records: list[dict], default_condition: str) -> None:
+            for r in records:
+                cond = r.get("condition", default_condition)
+                if cond not in counts:
+                    continue
+                for tr in (r.get("test_results") or []):
+                    if tr.get("passed") is True:
+                        continue
+                    et = str(tr.get("error_type") or "").strip()
+                    if not et:
+                        continue
+                    all_error_types.add(et)
+                    counts[cond][et] = counts[cond].get(et, 0) + 1
+
+        add_from_records(baseline, "C0")
+        if not df_s.empty:
+            add_from_records(df_s.to_dict(orient="records"), "C1")
+
+        error_types = sorted(all_error_types)
+        if not error_types:
+            # Still create an empty figure for reproducibility.
+            plt.figure(figsize=(6, 4))
+            plt.title("Hallucination Heatmap (no failed samples)")
+            plt.tight_layout()
+            plt.savefig(out, dpi=200)
+            plt.close()
+            return
+
+        mat = np.zeros((len(conds), len(error_types)), dtype=int)
+        for i, c in enumerate(conds):
+            for j, et in enumerate(error_types):
+                mat[i, j] = counts[c].get(et, 0)
+
+        plt.figure(figsize=(8, 4.5))
+        im = plt.imshow(mat, aspect="auto", cmap="Blues")
+        plt.colorbar(im, fraction=0.046, pad=0.04)
+        plt.xticks(range(len(error_types)), error_types, rotation=45, ha="right")
+        plt.yticks(range(len(conds)), conds)
+        plt.xlabel("error_type")
+        plt.ylabel("condition")
+        plt.title("Hallucination / Failure Error Types × Condition")
+
+        # Annotate counts
+        for i in range(len(conds)):
+            for j in range(len(error_types)):
+                if mat[i, j] > 0:
+                    plt.text(j, i, str(mat[i, j]), ha="center", va="center", fontsize=8)
+
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _confusion_matrix_oc(self, out: Path) -> None:
+        """Confusion matrix for OC detection: predicted assertiveness vs actual incorrect."""
+        # Baseline C0: pull assertiveness from auto_annotations
+        baseline = self._read_jsonl(Path("data/processed/baseline_results.jsonl"))
+        ann_rows = self._read_jsonl(Path("data/annotations/auto_annotations.jsonl"))
+        ann_map = {r.get("sample_id"): r.get("assertiveness_level") for r in ann_rows}
+
+        strat = self._read_jsonl(Path("data/processed/strategy_execution_records.jsonl"))
+        df_s = pd.DataFrame(strat)
+        if not df_s.empty:
+            df_s = (
+                df_s.sort_values(["condition", "model", "task_id", "round_number"])
+                .groupby(["condition", "model", "task_id"], as_index=False)
+                .tail(1)
+            )
+        strat_rows = df_s.to_dict(orient="records") if not df_s.empty else []
+
+        tp = fp = tn = fn = 0
+
+        def update(pred_overconfident: bool, actual_incorrect: bool) -> None:
+            nonlocal tp, fp, tn, fn
+            if pred_overconfident and actual_incorrect:
+                tp += 1
+            elif pred_overconfident and not actual_incorrect:
+                fp += 1
+            elif (not pred_overconfident) and (not actual_incorrect):
+                tn += 1
+            else:
+                fn += 1
+
+        # Baseline rows
+        for r in baseline:
+            sid = r.get("sample_id")
+            assert_level = int(ann_map.get(sid, 0) or 0)
+            pred = assert_level >= 2
+            incorrect = float(r.get("overall_pass_rate", 0.0) or 0.0) < 1.0
+            update(pred, incorrect)
+
+        # Strategy rows (already include assertiveness_level)
+        for r in strat_rows:
+            assert_level = int(r.get("assertiveness_level", 0) or 0)
+            pred = assert_level >= 2
+            incorrect = float(r.get("overall_pass_rate", 0.0) or 0.0) < 1.0
+            update(pred, incorrect)
+
+        mat = np.array([[tn, fp], [fn, tp]], dtype=int)
+        labels = [["Actual Correct", "Actual Incorrect"], ["Pred Not OC", "Pred OC"]]
+
+        plt.figure(figsize=(5.5, 4.2))
+        im = plt.imshow(mat, cmap="Blues", aspect="auto")
+        plt.colorbar(im, fraction=0.046, pad=0.04)
+        plt.xticks([0, 1], ["Pred Not OC", "Pred OC"])
+        plt.yticks([0, 1], ["Actual Correct", "Actual Incorrect"])
+        plt.xlabel("Prediction")
+        plt.ylabel("Actual")
+        plt.title("Overconfidence Detection Confusion Matrix")
+
+        # Annotate
+        for i in range(2):
+            for j in range(2):
+                plt.text(j, i, str(mat[i, j]), ha="center", va="center", fontsize=12)
+
         plt.tight_layout()
         plt.savefig(out, dpi=200)
         plt.close()
