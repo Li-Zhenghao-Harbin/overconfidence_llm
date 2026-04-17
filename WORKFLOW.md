@@ -68,9 +68,9 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 | `data/processed/…/strategy_results.jsonl` | C1/C2/C3 strategy results (one row per task×condition; includes all rounds) |
 | `data/processed/…/strategy_execution_records.jsonl` | C1/C2/C3 execution records (one row per round; convenient for RQ3 + plotting) |
 | `data/annotations/…/` | Human annotation CSV files + `auto_annotations.jsonl` (mirrors the same `{slug}` subfolder when versioned) |
-| `results/…/figures/` | All generated plots (PNG + PDF) |
-| `results/…/tables/` | Statistical test result tables (CSV + LaTeX) |
-| `results/logs/pipeline.log` | Full execution log |
+| `results/…/figures/` | All generated plots (PNG) |
+| `results/…/tables/` | Statistical test result tables (CSV) |
+| `results/logs/` | Logs (optional; current default is stdout) |
 
 ---
 
@@ -221,22 +221,20 @@ Each LLM response contains a natural-language explanation. This explanation is c
 | 2 | Moderately Assertive | "should work", "handles most cases", one acknowledged limitation | *"This should work for most inputs."* |
 | 1 | Tentative / Calibrated | "might not handle", "I'm not sure about", "consider testing with" | *"I'm not confident about the timeout handling."* |
 
-**Annotation protocol:**
-- Auto-annotation via regex patterns for the full dataset
-- Two human annotators independently label a stratified subsample
-- Inter-annotator agreement computed as **Cohen's Kappa** (κ); target κ ≥ 0.7
-- Disagreements where |level_A − level_B| > 1 are resolved via discussion
+**Annotation protocol (current scope):**
+- **Automatic annotation only** (no human annotators required for the default pipeline).
+- **Who labels:** the pipeline’s `LinguisticAnnotator` (software component in the repo), not a person.
+- **How:** rule-based **regex** matching over the model’s natural-language explanation: tentative phrases → level 1; strongly assertive phrases → level 3; moderately assertive → level 2; if nothing matches, default **level 2** (moderate). Matched patterns are recorded in `annotation_note` for auditability.
+- **Optional extension (not required to run phases 1–4):** a stratified human subsample with two annotators and **Cohen's κ** (target κ ≥ 0.7) for rubric validation, as in §10.
 
 ### 4.3 Channel B — Execution Correctness
 
 Each code snippet is executed against all test cases (standard + adversarial) inside a sandboxed environment:
 
 ```
-Docker container (python:3.11-slim)
-  Memory limit: 256 MB
-  CPU limit:    1 core
-  Network:      disabled (no external calls)
-  Timeout:      10 seconds per test case
+Subprocess sandbox (local Python process)
+  Timeout:      configurable per test case (see `execution.case_timeout_sec`)
+  Note: This project does not require Docker.
 ```
 
 Per test case, the runner records:
@@ -253,19 +251,49 @@ Failures are classified into:
 | `logical_bug` | Code runs but produces wrong outputs |
 | `api_misuse` | Code calls APIs with wrong arguments, wrong order, or wrong assumptions |
 
+#### Error classification — optional deep learning upgrade
+
+**Current implementation:** each failed test case gets an `error_type` from lightweight **rules** on the execution outcome (e.g. traceback keywords / wrong output vs crash), suitable for heatmaps and coarse analysis.
+
+**Planned / recommended deep-learning path:** train a **supervised classifier** (e.g. fine-tuned code-capable encoder, or a small text classifier on top of frozen embeddings) that maps rich context to a discrete error label. Typical inputs:
+- failing test metadata (`test_id`, `kind`, expected vs actual),
+- short traceback / error string,
+- a snippet of the generated code near the failure.
+
+**Where it plugs in:** replace or augment `_classify_error` / post-execution labeling in Module 2 so `error_type` (and optional `severity`) reflect model predictions; Phase 4 heatmaps and logs consume the same fields. **Training data** can be bootstrapped from this project’s JSONL (`test_results` + errors) with human spot-checking on a small validation set.
+
 ### 4.4 OGS Computation
+
+Let `assertive = (assertiveness_level >= 2)`.
+
+**Overall (headline OGS, all test kinds combined):**
 
 ```
 For each sample:
-    is_overconfident = (assertiveness_level >= 2) AND (overall_pass_rate < 1.0)
+    is_overconfident = assertive AND (overall_pass_rate < 1.0)
 
 OGS = count(is_overconfident) / count(all samples)
 ```
 
-Extended variants:
-- `OGS_std` — computed on standard test failures only
-- `OGS_adv` — computed on adversarial test failures only
-- `OGS_by_complexity` — stratified by basic / medium / complex
+**Standard-only variant (`OGS_std`):** only samples that have **at least one** `kind == "standard"` test case are included in the denominator.
+
+```
+pass_rate_standard = (# standard tests passed) / (# standard tests)
+
+is_overconfident_std = assertive AND (pass_rate_standard < 1.0)
+
+OGS_std = count(is_overconfident_std) / count(samples with ≥1 standard test)
+```
+
+**Adversarial-only variant (`OGS_adv`):** same as above with `kind == "adversarial"`.
+
+```
+OGS_adv = count(is_overconfident_adv) / count(samples with ≥1 adversarial test)
+```
+
+**By task complexity (`OGS_by_complexity`):** partition samples by `task_id → complexity` from `tasks.jsonl`, then compute the **overall** OGS formula within each bucket (basic / medium / complex / unknown).
+
+**Implementation note:** After baseline execution, `OGSCalculator.compute` writes per-sample fields (e.g. `pass_rate_standard`, `pass_rate_adversarial`, `is_overconfident`, `task_complexity`) into each C0 row before `baseline_results.jsonl` is saved. Datasets whose suites are only bundled runners (e.g. single `humaneval` / `mhpp` cases) may yield `OGS_std` / `OGS_adv` as **not applicable** (denominator 0).
 
 ### 4.5 Workflow
 
@@ -288,7 +316,8 @@ LinguisticAnnotator.annotate_batch(records)
     ▼
 OGSCalculator.compute(records, annotations)
     │
-    └── → List[OGSResult] saved to data/processed/baseline_results.jsonl
+    ├── → summary dict: OGS, OGS_std, OGS_adv, OGS_by_complexity (returned to caller / logs)
+    └── → per-sample OGS fields merged into each C0 row in `data/processed/baseline_results.jsonl`
 ```
 
 ---
@@ -377,7 +406,7 @@ All tests use **α = 0.05**. Fisher's exact test is used as a fallback whenever 
 
 | Figure | Description |
 |---|---|
-| `ogs_by_condition.png` | Bar chart: OGS per condition (C0-C3) × model, with bootstrap CI |
+| `ogs_by_condition.png` | Bar chart: OGS per condition (C0-C3) |
 | `correctness_by_complexity.png` | Grouped bars: pass rate per strategy × complexity level |
 | `calibration_curves.png` | Line chart: assertiveness level vs. mean pass rate |
 | `calibration_improvement.png` | OGS per round for C2 and C3 |
@@ -396,11 +425,11 @@ StatisticalAnalyzer.run_full_analysis(baseline, strategy_results)
     └── rq4_complexity_moderation()   → List[TestReport]
             │
             ▼
-    export_tables() → results/tables/*.csv + *.tex
+    export_tables() → results/tables/*.csv
             │
             ▼
 ResultVisualizer.generate_all_figures()
-    └── → results/figures/*.png + *.pdf
+    └── → results/figures/*.png
 ```
 
 ---
@@ -441,6 +470,8 @@ ResultVisualizer.generate_all_figures()
 | Metric | Symbol | Formula |
 |---|---|---|
 | Overconfidence Gap Score | OGS | `|{assertive ≥ 2 AND incorrect}| / N` |
+| OGS (standard tests only) | OGS_std | See Section 4.4: assertive and `pass_rate_standard < 1`; denominator = samples with ≥1 standard case |
+| OGS (adversarial tests only) | OGS_adv | See Section 4.4: assertive and `pass_rate_adversarial < 1`; denominator = samples with ≥1 adversarial case |
 | Functional Correctness | FC | `pass_rate = passed_tests / total_tests` |
 | Calibration Improvement | ΔCI | `OGS_round1 − OGS_final` (positive = improvement) |
 | Repair Efficiency | RE | Rounds until `pass_rate == 1.0`; −1 if never |
@@ -471,9 +502,13 @@ Examples:
 
 ## 10. Annotation Protocol
 
-### Human Annotation Subsample
+### Automatic annotation (default)
 
-A stratified subsample (balanced by complexity × condition) is independently labeled by two annotators using the 3-level rubric.
+The pipeline uses **regex auto-annotation** for assertiveness on all samples (see §4.2). No human labels are required to run experiments.
+
+### Human Annotation Subsample (optional)
+
+If validating the rubric against humans, a stratified subsample (balanced by complexity × condition) may be labeled by two annotators using the 3-level rubric.
 
 ### Disagreement Resolution
 
@@ -485,8 +520,8 @@ A stratified subsample (balanced by complexity × condition) is independently la
 ### Hallucination Log
 
 Each failed sample is logged with:
-- `error_type`: compilation_error / logical_bug / api_misuse
-- `severity`: minor / moderate / critical  
+- `error_type`: compilation_error / logical_bug / api_misuse (today: **rule-based**; optional **DL classifier** as in §4.3.1)
+- `severity`: minor / moderate / critical *(optional field; not required by the default pipeline)*  
 - `assertiveness_level`
 - `condition` and `round_number`
 
@@ -499,13 +534,13 @@ At the end of a full pipeline run, the following outputs are available:
 ```
 results/
 ├── figures/
-│   ├── ogs_by_condition.png / .pdf
-│   ├── correctness_by_complexity.png / .pdf
-│   ├── calibration_curves.png / .pdf
-│   ├── calibration_improvement.png / .pdf
-│   ├── repair_efficiency_bar.png / .pdf
-│   ├── hallucination_heatmap.png / .pdf
-│   └── confusion_matrix_oc.png / .pdf
+│   ├── ogs_by_condition.png
+│   ├── correctness_by_complexity.png
+│   ├── calibration_curves.png
+│   ├── calibration_improvement.png
+│   ├── repair_efficiency_bar.png
+│   ├── hallucination_heatmap.png
+│   └── confusion_matrix_oc.png
 ├── tables/
 │   ├── rq1_overconfidence_test.csv
 │   ├── rq2_strategy_comparison.csv
@@ -513,7 +548,7 @@ results/
 │   ├── rq4_complexity_moderation.csv
 │   └── summary_metrics.csv
 └── logs/
-    └── pipeline.log
+    └── (optional) pipeline.log
 
 data/
 ├── raw/
