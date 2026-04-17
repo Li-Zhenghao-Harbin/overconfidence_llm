@@ -37,6 +37,11 @@ _DEFAULTS: dict[str, Any] = {
             "limit": 0,
             "always_refresh": False,
         },
+        "mhpp": {
+            "url": "https://raw.githubusercontent.com/SparksofAGI/MHPP/main/data/MHPP.jsonl",
+            "limit": 0,
+            "always_refresh": False,
+        },
     },
     "annotation": {"kappa_threshold": 0.7, "rubric_levels": 3},
     "strategies": {"C1": {}, "C2": {"max_rounds": 3}, "C3": {"max_rounds": 3}},
@@ -168,7 +173,10 @@ def apply_output_paths(cfg: dict) -> None:
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
-    load_dotenv()
+    # Prefer the repo-local `.env` for reproducibility across runs.
+    # Many users have global OPENAI_API_KEY set (e.g., for another provider);
+    # without override=True, python-dotenv will not replace it.
+    load_dotenv(override=True)
     p = Path(path)
     if not p.is_file():
         raise FileNotFoundError(f"Config not found: {p.resolve()}")

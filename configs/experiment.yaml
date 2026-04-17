@@ -8,14 +8,17 @@ tasks:
   tasks_per_level: 3
   # 原始数据文件名：null = 使用上面的 task_file / 自动推导 suite_file（会覆盖同路径文件）
   # auto = 使用 tasks_{dataset}_{首个baseline模型名}.jsonl + test_suites_{...}.jsonl，避免覆盖默认文件
-  raw_run_id: null
-  # builtin: use built-in 9 tasks (or existing tasks.jsonl if present)
-  # humaneval: auto-download HumanEval into task_file before phases that need tasks
-  dataset: humaneval
+  raw_run_id: auto
+  # builtin | humaneval | mhpp（MHPP 公开 JSONL 无隐藏测例，本地为 smoke 执行，见 mhpp_dataset 模块注释）
+  dataset: mhpp
   humaneval:
     url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
-    # 0 = 全量 164 题；本次用 10 题跑通全流程（改 0 可全量；改题量后若需重下可设 always_refresh: true）
-    limit: 10
+    limit: 0
+    always_refresh: false
+  mhpp:
+    url: https://raw.githubusercontent.com/SparksofAGI/MHPP/main/data/MHPP.jsonl
+    # 0 = 全量 210；子集便于迭代
+    limit: 6
     always_refresh: false
 
 # Phase 2–4 落盘与图表目录。省略或与 raw 联动：tasks.raw_run_id 为 auto/自定义时，默认用同一 slug 子目录，避免多模型互相覆盖。
@@ -37,14 +40,19 @@ strategies:
 analysis:
   significance_level: 0.05
 
-# LLM: 与 default_model 一致——讯飞星火需 base_url；纯 OpenAI 可改为 gpt-4o 且 base_url: null
+# LLM: GitHub Models (OpenAI-compatible)
 llm:
-  base_url: https://spark-api-open.xf-yun.com/v1
-  default_model: generalv3.5
+  # GitHub Models OpenAI-compatible endpoint (GitHub Docs quickstart)
+  base_url: https://models.github.ai/inference
+  default_model: gpt-4o
   temperature: 0.2
   max_tokens: 4096
+  request_timeout_sec: 180
+  # GitHub Models（免费额度）会限流；遇到 429 / RateLimitError 自动退避重试
+  max_retries: 8
+  backoff_max_sec: 60
 
 models:
   baseline:
-    - name: spark
-      model: generalv3.5
+    - name: gpt4o
+      model: gpt-4o

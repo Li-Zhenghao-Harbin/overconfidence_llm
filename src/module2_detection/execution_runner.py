@@ -9,7 +9,11 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+import random
 from typing import Any
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from src.module1_data.task_manager import Task
 from src.module1_data.test_suite import TestCase, TestSuite, TestSuiteBuilder
@@ -137,10 +141,58 @@ except Exception:
     )
 
 
+def _invoke_mhpp_worker_payload(payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+    raw_in = json.dumps(payload, ensure_ascii=False)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "src.module2_detection.mhpp_exec_worker"],
+            input=raw_in.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            cwd=str(_REPO_ROOT),
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "err": "timeout", "runtime_ms": float(timeout) * 1000.0, "trace": []}
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        return {"ok": False, "err": err or "empty stdout", "runtime_ms": 0.0, "trace": []}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "err": raw[:2000], "runtime_ms": 0.0, "trace": []}
+
+
+def _invoke_mhpp_in_process(
+    prompt: str, completion: str, entry_point: str, timeout: int
+) -> tuple[bool, Any, str, float]:
+    program = _merge_humaneval_program(prompt, completion, entry_point)
+    data = _invoke_mhpp_worker_payload(
+        {"program": program, "entry_point": entry_point, "trace": False, "max_events": 0},
+        timeout,
+    )
+    if data.get("ok"):
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0)
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+    )
+
+
 def _invoke_in_process(
     code: str, fn_name: str, inp: Any, timeout: int
 ) -> tuple[bool, Any, str, float]:
     """Run user code in a fresh subprocess (no Docker)."""
+    if isinstance(inp, dict) and inp.get("runner") == "mhpp":
+        return _invoke_mhpp_in_process(
+            str(inp.get("prompt", "")),
+            code,
+            str(inp.get("entry_point", fn_name)),
+            timeout,
+        )
     if isinstance(inp, dict) and inp.get("runner") == "humaneval":
         return _invoke_humaneval_in_process(
             str(inp.get("prompt", "")),
@@ -205,6 +257,30 @@ def _invoke_in_process_trace(
     Trace is best-effort: it records at most `max_events` line events and a small
     snapshot of locals (repr-truncated).
     """
+    if isinstance(inp, dict) and inp.get("runner") == "mhpp":
+        prompt = str(inp.get("prompt", ""))
+        ep = str(inp.get("entry_point", fn_name))
+        program = _merge_humaneval_program(prompt, code, ep)
+        data = _invoke_mhpp_worker_payload(
+            {
+                "program": program,
+                "entry_point": ep,
+                "trace": True,
+                "max_events": int(max_events),
+            },
+            timeout,
+        )
+        trace = json.dumps(data.get("trace") or [], ensure_ascii=False)
+        if data.get("ok"):
+            return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0), trace
+        return (
+            False,
+            None,
+            str(data.get("err", "")),
+            float(data.get("runtime_ms", 0.0) or 0.0),
+            trace,
+        )
+
     if isinstance(inp, dict) and inp.get("runner") == "humaneval":
         prompt = str(inp.get("prompt", ""))
         test_src = str(inp.get("test", ""))
@@ -376,7 +452,7 @@ def _classify_error(err: str) -> str:
 class _LLMClient:
     def __init__(self, config: dict):
         try:
-            from openai import AuthenticationError, OpenAI  # type: ignore
+            from openai import AuthenticationError, OpenAI, RateLimitError  # type: ignore
         except ModuleNotFoundError as e:  # pragma: no cover
             raise ModuleNotFoundError(
                 "缺少依赖 `openai`，Phase 2/3 需要安装：\n"
@@ -385,6 +461,7 @@ class _LLMClient:
             ) from e
 
         self._AuthenticationError = AuthenticationError
+        self._RateLimitError = RateLimitError
         llm = config.get("llm", {})
         api_key = llm.get("api_key")
         if not api_key:
@@ -402,32 +479,55 @@ class _LLMClient:
         self._model = llm.get("default_model", "gpt-4o")
         self._temperature = float(llm.get("temperature", 0.2))
         self._max_tokens = int(llm.get("max_tokens", 4096))
+        self._max_retries = int(llm.get("max_retries", 8) or 8)
+        self._backoff_max_sec = float(llm.get("backoff_max_sec", 60) or 60)
 
     def complete(self, system: str, user: str, model: str | None = None) -> str:
         mid = model or self._model
-        try:
-            resp = self._client.chat.completions.create(
-                model=mid,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=self._temperature,
-                max_tokens=self._max_tokens,
-            )
-        except Exception as e:  # noqa: BLE001
-            if isinstance(e, self._AuthenticationError):
-                err_text = str(e).upper()
-                if "HMAC" in err_text:
-                    raise ValueError(
-                        "讯飞返回 401（HMAC 不匹配）：OPENAI_API_KEY 必须是控制台里「HTTP 服务接口」的 "
-                        "**APIPassword**，不要把 WebSocket 的 APIKey 或 APISecret 单独当密码填。"
-                        "若你只有 APIKey + APISecret，请在 .env 设置 IFLYTEK_SPARK_API_KEY 与 "
-                        "IFLYTEK_SPARK_API_SECRET（会自动拼成 APIKey:APISecret），并按讯飞文档把 "
-                        "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
-                    ) from e
-            raise
-        return (resp.choices[0].message.content or "").strip()
+        last_err: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                resp = self._client.chat.completions.create(
+                    model=mid,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
+                )
+                return (resp.choices[0].message.content or "").strip()
+            except Exception as e:  # noqa: BLE001
+                if isinstance(e, self._AuthenticationError):
+                    err_text = str(e).upper()
+                    if "HMAC" in err_text:
+                        raise ValueError(
+                            "讯飞返回 401（HMAC 不匹配）：OPENAI_API_KEY 必须是控制台里「HTTP 服务接口」的 "
+                            "**APIPassword**，不要把 WebSocket 的 APIKey 或 APISecret 单独当密码填。"
+                            "若你只有 APIKey + APISecret，请在 .env 设置 IFLYTEK_SPARK_API_KEY 与 "
+                            "IFLYTEK_SPARK_API_SECRET（会自动拼成 APIKey:APISecret），并按讯飞文档把 "
+                            "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
+                        ) from e
+                    raise
+
+                # GitHub Models free tier is rate-limited; do exponential backoff with jitter.
+                if isinstance(e, self._RateLimitError) and attempt < self._max_retries:
+                    sleep_s = min(self._backoff_max_sec, (2**attempt) + random.random())
+                    logger.warning(
+                        "Rate limited by provider; backing off %.1fs (attempt %d/%d)",
+                        sleep_s,
+                        attempt + 1,
+                        self._max_retries,
+                    )
+                    time.sleep(sleep_s)
+                    last_err = e
+                    continue
+
+                last_err = e
+                break
+
+        assert last_err is not None
+        raise last_err
 
 
 class ExecutionRunner:

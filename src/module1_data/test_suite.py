@@ -41,7 +41,9 @@ class TestSuiteBuilder:
         lines: list[str] = []
         for t in tasks:
             meta = t.metadata or {}
-            if meta.get("humaneval") or meta.get("humaneval_test"):
+            if meta.get("mhpp"):
+                cases = self._build_mhpp(t)
+            elif meta.get("humaneval") or meta.get("humaneval_test"):
                 cases = self._build_humaneval(t)
             else:
                 cases = self._build_standard(t) + self._build_adversarial(t)
@@ -52,6 +54,28 @@ class TestSuiteBuilder:
             f.write("\n".join(lines) + ("\n" if lines else ""))
         logger.info("Wrote %d test suite rows to %s", len(lines), self.suite_file)
         return suites
+
+    def _build_mhpp(self, task: Task) -> list[TestCase]:
+        """Single smoke-exec case (no official MHPP hidden tests in public JSONL)."""
+        meta = task.metadata or {}
+        entry = meta.get("entry_point")
+        if not entry:
+            m = re.search(r"def\s+(\w+)\s*\(", task.function_signature or "")
+            entry = m.group(1) if m else "solution"
+        stub = meta.get("mhpp_program_stub") or task.description
+        tc = TestCase(
+            test_id=f"{task.task_id}_mhpp0",
+            task_id=task.task_id,
+            input={
+                "runner": "mhpp",
+                "prompt": stub,
+                "entry_point": entry,
+                "parameters": meta.get("mhpp_parameters") or [],
+            },
+            expected_output=True,
+            kind="mhpp",
+        )
+        return [tc]
 
     def _build_humaneval(self, task: Task) -> list[TestCase]:
         """One bundled HumanEval test (official `check(candidate)` script)."""
