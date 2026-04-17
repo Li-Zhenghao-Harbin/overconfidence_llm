@@ -53,7 +53,7 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 │                             ▼                         ▼                  │
 │                    ┌────────────────────────────────────────┐            │
 │                    │           Module 4                     │            │
-│                    │   Statistical Analysis & Reporting      │            │
+│                    │   Statistical Analysis (tables + PNG)   │            │
 │                    └────────────────────────────────────────┘            │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -394,6 +394,8 @@ StrategyRunner.run_all_strategies(tasks)
 
 ## 6. Module 4 — Statistical Analysis & Reporting
 
+**Deliverables in code:** hypothesis tests exported as **CSV** tables and core plots as **PNG** under `results/`. There is **no** auto-generated narrative report (Markdown/PDF); write-up for coursework lives outside this repo.
+
 ### 6.1 Research Questions and Tests
 
 | RQ | Question | Test | Effect Size |
@@ -463,7 +465,7 @@ ResultVisualizer.generate_all_figures()
               [Statistical Analysis]
                        │
                        ▼
-         [Figures + Tables + Report]
+         [Figures (PNG) + Tables (CSV)]
 ```
 
 ---
