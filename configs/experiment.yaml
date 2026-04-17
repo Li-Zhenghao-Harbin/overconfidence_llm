@@ -30,6 +30,13 @@ annotation:
   kappa_threshold: 0.7
   rubric_levels: 3
 
+# 失败测例的严重性（minor/moderate/critical）：优先用 PyTorch ByteCNN（需先训练权重）
+# 训练：python scripts/train_severity_dl.py --inputs data/processed/baseline_results.jsonl ...
+severity_dl:
+  enabled: true
+  checkpoint: models/severity_cnn.pt
+  device: cpu
+
 strategies:
   C1: {}
   C2:

@@ -25,6 +25,7 @@ from src.module2_detection.execution_runner import (
     _invoke_in_process_trace,
     _outputs_equal,
 )
+from src.module2_detection.severity_dl import SeverityPredictor, annotate_test_results_list
 from src.module2_detection.linguistic_annotator import (
     AnnotationRecord,
     LinguisticAnnotator,
@@ -62,6 +63,7 @@ class StrategyRunner:
         self.config = config
         self._llm = _LLMClient(config)
         self._annotator = LinguisticAnnotator(config)
+        self._severity = SeverityPredictor(config)
         self.timeout = int(config.get("execution", {}).get("case_timeout_sec", 15))
         self.max_rounds = int(
             max(
@@ -137,6 +139,7 @@ class StrategyRunner:
                     ),
                 )
             )
+        annotate_test_results_list(self.config, results, self._severity)
         rate = passed_n / len(results) if results else 0.0
         sid = f"{label}_{condition}_{task.task_id}_r{round_number}"
         rec = ExecutionRecord(
@@ -179,6 +182,7 @@ class StrategyRunner:
                     "actual": getattr(tr, "actual_output", None),
                     "error": tr.error,
                     "error_type": getattr(tr, "error_type", ""),
+                    "severity": getattr(tr, "severity", ""),
                 }
             )
             if len(failed) >= limit:

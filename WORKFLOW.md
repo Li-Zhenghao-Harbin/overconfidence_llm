@@ -242,6 +242,8 @@ Per test case, the runner records:
 - `actual_output` vs `expected_output`
 - `error` (exception type + traceback if failed)
 - `runtime_ms`
+- `error_type` (rule-based coarse label when failed)
+- `severity` (`minor` / `moderate` / `critical` when failed — ByteCNN if trained + enabled, else rule fallback; empty when passed)
 
 Failures are classified into:
 
@@ -251,16 +253,17 @@ Failures are classified into:
 | `logical_bug` | Code runs but produces wrong outputs |
 | `api_misuse` | Code calls APIs with wrong arguments, wrong order, or wrong assumptions |
 
-#### Error classification — optional deep learning upgrade
+#### Error classification — `error_type` (rules) + `severity` (deep learning)
 
-**Current implementation:** each failed test case gets an `error_type` from lightweight **rules** on the execution outcome (e.g. traceback keywords / wrong output vs crash), suitable for heatmaps and coarse analysis.
+**`error_type` (implemented, rule-based):** each failed test case gets a coarse label from `_classify_error` on the traceback / error string (`compilation_error`, `timeout`, `api_misuse`, `runtime_error`, …). This is fast and deterministic; Phase 4 heatmaps aggregate these labels.
 
-**Planned / recommended deep-learning path:** train a **supervised classifier** (e.g. fine-tuned code-capable encoder, or a small text classifier on top of frozen embeddings) that maps rich context to a discrete error label. Typical inputs:
-- failing test metadata (`test_id`, `kind`, expected vs actual),
-- short traceback / error string,
-- a snippet of the generated code near the failure.
+**`severity` (implemented, deep learning with safe fallback):** each failed case also receives **`minor` / `moderate` / `critical`** in the `severity` field.
+- **Model:** a small **byte-level 1-D CNN** over the text `error_type + "\n" + error`, implemented in `src/module2_detection/severity_dl.py` (`SeverityPredictor`).
+- **Configuration:** YAML block `severity_dl` (`enabled`, `checkpoint`, `device`, optional `max_len` / `emb_dim` / `conv_dim`). Default in code has `enabled: false`; enable in `configs/experiment.yaml` when you want DL inference.
+- **Training:** `python scripts/train_severity_dl.py` reads existing JSONL (`baseline_results.jsonl`, `strategy_execution_records.jsonl`, …) and uses **teacher pseudo-labels** from `rule_severity` (same module) so you can train **without hand-labeled severity**. Weights are written to `models/severity_cnn.pt` (gitignored).
+- **Runtime:** if `severity_dl.enabled` is true but **torch** is missing or the **checkpoint** is absent, the pipeline **falls back to `rule_severity`** and continues.
 
-**Where it plugs in:** replace or augment `_classify_error` / post-execution labeling in Module 2 so `error_type` (and optional `severity`) reflect model predictions; Phase 4 heatmaps and logs consume the same fields. **Training data** can be bootstrapped from this project’s JSONL (`test_results` + errors) with human spot-checking on a small validation set.
+**Optional future work (`error_type` via DL):** replace `_classify_error` with a second classifier using code snippets + structured failure features; same JSONL bootstrap pattern as severity.
 
 ### 4.4 OGS Computation
 

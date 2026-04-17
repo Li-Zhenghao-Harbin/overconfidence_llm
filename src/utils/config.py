@@ -44,6 +44,14 @@ _DEFAULTS: dict[str, Any] = {
         },
     },
     "annotation": {"kappa_threshold": 0.7, "rubric_levels": 3},
+    "severity_dl": {
+        "enabled": False,
+        "checkpoint": "models/severity_cnn.pt",
+        "device": "cpu",
+        "max_len": 384,
+        "emb_dim": 48,
+        "conv_dim": 96,
+    },
     "strategies": {"C1": {}, "C2": {"max_rounds": 3}, "C3": {"max_rounds": 3}},
     "analysis": {"significance_level": 0.05},
     "llm": {

@@ -17,6 +17,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from src.module1_data.task_manager import Task
 from src.module1_data.test_suite import TestCase, TestSuite, TestSuiteBuilder
+from src.module2_detection.severity_dl import SeverityPredictor, annotate_test_results_list
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class TestResult:
     error: str = ""
     runtime_ms: float = 0.0
     error_type: str = ""  # compilation_error | logical_bug | api_misuse | runtime_error | timeout
+    severity: str = ""  # minor | moderate | critical (DL or rule fallback)
 
 
 @dataclass
@@ -535,6 +537,7 @@ class ExecutionRunner:
         self.config = config
         self.timeout = int(config.get("execution", {}).get("case_timeout_sec", 15))
         self._llm = _LLMClient(config)
+        self._severity = SeverityPredictor(config)
 
     def run_baseline(self, tasks: list[Task]) -> list[dict[str, Any]]:
         builder = TestSuiteBuilder(self.config)
@@ -570,6 +573,7 @@ class ExecutionRunner:
                             ),
                         )
                     )
+                annotate_test_results_list(self.config, results, self._severity)
                 n = len(results)
                 passed_n = sum(1 for r in results if r.passed)
                 rate = passed_n / n if n else 0.0
