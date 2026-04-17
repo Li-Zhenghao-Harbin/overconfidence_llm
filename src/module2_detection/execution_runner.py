@@ -454,7 +454,12 @@ def _classify_error(err: str) -> str:
 class _LLMClient:
     def __init__(self, config: dict):
         try:
-            from openai import AuthenticationError, OpenAI, RateLimitError  # type: ignore
+            from openai import (  # type: ignore
+                AuthenticationError,
+                InternalServerError,
+                OpenAI,
+                RateLimitError,
+            )
         except ModuleNotFoundError as e:  # pragma: no cover
             raise ModuleNotFoundError(
                 "缺少依赖 `openai`，Phase 2/3 需要安装：\n"
@@ -463,6 +468,7 @@ class _LLMClient:
             ) from e
 
         self._AuthenticationError = AuthenticationError
+        self._InternalServerError = InternalServerError
         self._RateLimitError = RateLimitError
         llm = config.get("llm", {})
         api_key = llm.get("api_key")
@@ -511,6 +517,18 @@ class _LLMClient:
                             "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
                         ) from e
                     raise
+
+                if isinstance(e, self._InternalServerError):
+                    err_text = str(e)
+                    if "11200" in err_text or "AppIdNoAuthError" in err_text:
+                        raise ValueError(
+                            "讯飞返回 11200（AppIdNoAuthError）：多为「HTTP 接口的 APIPassword 所属版本」与 "
+                            "请求体里的 model 不一致，或该应用未开通对应模型。"
+                            "官方说明：不同版本（Lite / Pro / Max 等）对应不同 APIPassword，须在控制台对应版本页获取。"
+                            "若你用的是 Lite 页密钥，请把 configs/experiment.yaml 中 default_model 与 "
+                            "models.baseline[].model 改为 lite；若已开通 Max，请用 Max 页的 APIPassword 并保持 "
+                            "generalv3.5（见讯飞《星火认知大模型 http 接口文档》model 取值表）。"
+                        ) from e
 
                 # GitHub Models free tier is rate-limited; do exponential backoff with jitter.
                 if isinstance(e, self._RateLimitError) and attempt < self._max_retries:
