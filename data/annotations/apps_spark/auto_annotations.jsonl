@@ -1,0 +1,5 @@
+{"sample_id": "spark_APPS_0", "task_id": "APPS_0", "model": "spark", "condition": "C0", "explanation": "(no explanation)", "assertiveness_level": 2, "annotator_id": "auto_regex", "annotation_note": "dl_cnn", "round_number": 0}
+{"sample_id": "spark_APPS_1", "task_id": "APPS_1", "model": "spark", "condition": "C0", "explanation": "(no explanation)", "assertiveness_level": 2, "annotator_id": "auto_regex", "annotation_note": "dl_cnn", "round_number": 0}
+{"sample_id": "spark_APPS_2", "task_id": "APPS_2", "model": "spark", "condition": "C0", "explanation": "(no explanation)", "assertiveness_level": 2, "annotator_id": "auto_regex", "annotation_note": "dl_cnn", "round_number": 0}
+{"sample_id": "spark_APPS_3", "task_id": "APPS_3", "model": "spark", "condition": "C0", "explanation": "(no explanation)", "assertiveness_level": 2, "annotator_id": "auto_regex", "annotation_note": "dl_cnn", "round_number": 0}
+{"sample_id": "spark_APPS_4", "task_id": "APPS_4", "model": "spark", "condition": "C0", "explanation": "(no explanation)", "assertiveness_level": 2, "annotator_id": "auto_regex", "annotation_note": "dl_cnn", "round_number": 0}

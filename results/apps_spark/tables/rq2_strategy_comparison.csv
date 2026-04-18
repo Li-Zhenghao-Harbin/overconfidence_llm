@@ -1,0 +1,5 @@
+test_name,statistic,p_value,significant,effect_size,effect_size_label,notes
+RQ2: overconfidence by condition (chi_square_skipped),,,False,,Cramer's V,"The internally computed table of expected frequencies has a zero element at (np.int64(0), np.int64(0))."
+RQ2 pairwise: C0 vs C1 (fisher_exact),,1.0,False,,Cramer's V,bonferroni_alpha=0.0167 degenerate_row_or_col
+RQ2 pairwise: C0 vs C2 (fisher_exact),,1.0,False,,Cramer's V,bonferroni_alpha=0.0167 degenerate_row_or_col
+RQ2 pairwise: C0 vs C3 (fisher_exact),,1.0,False,,Cramer's V,bonferroni_alpha=0.0167 degenerate_row_or_col

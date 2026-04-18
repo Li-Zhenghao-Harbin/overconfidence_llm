@@ -1,8 +1,8 @@
 *.env
 *.env.example
 
-/results/
-/data/
+# /results/
+# /data/
 
 # Trained severity model (generate with scripts/train_severity_dl.py)
 models/*.pt

@@ -1,0 +1,4 @@
+condition,round_number,n,ogs,pass_rate,assertive_rate
+C1,1,5,1.0,0.0,1.0
+C2,1,5,1.0,0.0,1.0
+C3,1,5,1.0,0.0,1.0

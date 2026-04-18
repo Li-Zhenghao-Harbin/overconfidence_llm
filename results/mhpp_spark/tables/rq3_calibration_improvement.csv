@@ -1,0 +1,5 @@
+test_name,statistic,p_value,significant,effect_size,effect_size_label,notes
+RQ3: correctness improves in C2 (McNemar exact),0.0,1.0,False,,,"paired by (model,task); discordant table [[-,b],[c,-]]"
+RQ3: OGS by round C2,,,False,,,descriptive (exported separately)
+RQ3: correctness improves in C3 (McNemar exact),0.0,1.0,False,,,"paired by (model,task); discordant table [[-,b],[c,-]]"
+RQ3: OGS by round C3,,,False,,,descriptive (exported separately)

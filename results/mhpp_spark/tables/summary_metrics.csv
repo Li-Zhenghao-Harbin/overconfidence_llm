@@ -1,0 +1,5 @@
+condition,complexity,n,ogs,pass_rate,assertive_rate
+C0,basic,20,0.0,0.6,0.0
+C1,basic,20,0.0,0.45,0.0
+C2,basic,20,0.0,0.45,0.0
+C3,basic,20,0.0,0.45,0.0

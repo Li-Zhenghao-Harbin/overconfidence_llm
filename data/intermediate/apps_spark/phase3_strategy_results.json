@@ -1,0 +1,638 @@
+{
+  "C1": [
+    {
+      "condition": "C1",
+      "model": "spark",
+      "task_id": "APPS_0",
+      "rounds": [
+        {
+          "sample_id": "spark_C1_APPS_0_r1",
+          "task_id": "APPS_0",
+          "model": "spark",
+          "condition": "C1",
+          "code": "def reverse_words(word):\n    return word[::-1]\n\ndef solve(t, test_cases):\n    for i in range(t):\n        n = int(input())\n        words = [int(x) for x in input().split()]\n        if len(set(words)) != n:\n            print('-1')\n            continue\n        result = []\n        for j in range(n):\n            if words[j] == 0:\n                result.append(j + 1)\n            else:\n                result.append(reverse_words(str(words[j])))\n        print(*result)\n\n# Test cases\nsolve(4, [[0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]])",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_0_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1\n3\n-1\n0\n\n2\n1 2",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 51.145600009476766,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C1_APPS_0_r1",
+          "task_id": "APPS_0",
+          "model": "spark",
+          "condition": "C1",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C1",
+      "model": "spark",
+      "task_id": "APPS_1",
+      "rounds": [
+        {
+          "sample_id": "spark_C1_APPS_1_r1",
+          "task_id": "APPS_1",
+          "model": "spark",
+          "condition": "C1",
+          "code": "from collections import deque\n\ndef diagonal_moves(q, queries):\n    n = len(queries)\n    moves = [0] * n\n    for i in range(n):\n        moves[i] = queries[i][2]\n\n    max_diagonal_moves = 0\n    for i in range(n):\n        x, y, k = queries[i]\n        dx, dy = x - n + 1, y - n + 1\n        if dx == dy:\n            max_diagonal_moves = max(max_diagonal_moves, k)\n            continue\n        if dx > dy:\n            dx, dy = dx - k, dy - k\n        if dx < 0:\n            dx, dy = dx + k, dy + k\n        if dy < 0:\n            dx, dy = dx + k, dy + k\n        if dx == dy:\n            max_diagonal_moves = max(max_diagonal_moves, k)\n            continue\n        if dx > dy:\n            dx, dy = dx - k, dy - k\n        if dx < 0:\n            dx, dy = dx + k, dy + k\n        if dy < 0:\n            dx, dy = dx + k, dy + k\n\n    return max_diagonal_moves\n\n# Read input from stdin\ninput_data = list(map(int, input().split()))\nq = int(input_data[0])\nqueries = []\nfor i in range(q):\n    queries.append(list(map(int, input().split())))\n\n# Find the maximum number of diagonal moves\nresult = diagonal_moves(q, queries)\nprint(result)",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_1_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1\n6\n-1",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 57.614199991803616,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C1_APPS_1_r1",
+          "task_id": "APPS_1",
+          "model": "spark",
+          "condition": "C1",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C1",
+      "model": "spark",
+      "task_id": "APPS_2",
+      "rounds": [
+        {
+          "sample_id": "spark_C1_APPS_2_r1",
+          "task_id": "APPS_2",
+          "model": "spark",
+          "condition": "C1",
+          "code": "def find_sequence(t, nums):\n    sequences = []\n    for _ in range(t):\n        n = int(input())\n        a, b, c = map(int, input().split())\n        sequence = [a] + list(range(1, n+1)) + [c]\n        for i in range(1, n):\n            if a == b:\n                sequence[i] = a\n            elif a == c:\n                sequence[i] = c\n            else:\n                sequence[i] = b\n        sequences.append(sequence)\n    return sequences\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    a, b, c = map(int, input().split())\n    result = find_sequence(t, [a, b, c])\n    for p in result:\n        print(' '.join(map(str, p)))",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_2_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1 2 3\n1 2 1 2\n1 3 4 1 2 1 4\n1 2 3\n1 2 1 2 3 2 3 1 3 2",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpqj9_2p4f.py\", line 21, in <module>\r\n    result = find_sequence(t, [a, b, c])\r\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpqj9_2p4f.py\", line 4, in find_sequence\r\n    n = int(input())\r\n        ^^^^^^^^^^^^\r\nValueError: invalid literal for int() with base 10: '2 2 2'\r\n",
+              "runtime_ms": 26.86730001005344,
+              "error_type": "runtime_error",
+              "severity": "critical"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C1_APPS_2_r1",
+          "task_id": "APPS_2",
+          "model": "spark",
+          "condition": "C1",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C1",
+      "model": "spark",
+      "task_id": "APPS_3",
+      "rounds": [
+        {
+          "sample_id": "spark_C1_APPS_3_r1",
+          "task_id": "APPS_3",
+          "model": "spark",
+          "condition": "C1",
+          "code": "from sys import stdin, stdout\n\ndef max_difference(t, cases):\n    for _ in range(t):\n        n, k = map(int, stdin.readline().split())\n        a = list(map(int, stdin.readline().split()))\n        max_a = max(a)\n        min_a = min(a)\n        diff = max_a - min_a\n        print(diff)\n\nif __name__ == \"__main__\":\n    t = int(stdin.readline())\n    cases = []\n    for _ in range(t):\n        cases.append(list(map(int, stdin.readline().split())))\n    max_difference(t, cases)",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_3_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "10\n0",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp6td23fb7.py\", line 17, in <module>\r\n    max_difference(t, cases)\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp6td23fb7.py\", line 5, in max_difference\r\n    n, k = map(int, stdin.readline().split())\r\n    ^^^^\r\nValueError: not enough values to unpack (expected 2, got 0)\r\n",
+              "runtime_ms": 51.83499999111518,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C1_APPS_3_r1",
+          "task_id": "APPS_3",
+          "model": "spark",
+          "condition": "C1",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C1",
+      "model": "spark",
+      "task_id": "APPS_4",
+      "rounds": [
+        {
+          "sample_id": "spark_C1_APPS_4_r1",
+          "task_id": "APPS_4",
+          "model": "spark",
+          "condition": "C1",
+          "code": "from collections import Counter\n\ndef is_beautiful(p):\n    n = len(p)\n    counter = Counter(p)\n    for i in range(n):\n        if counter[p[i]] > 1:\n            return False\n    return True\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    p = list(map(int, input().split()))\n    print(''.join(['1' if is_beautiful(p) else '0' for _ in range(n)]) + '\\n')",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_4_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "101011\n11111\n1001",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 55.704600003082305,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C1_APPS_4_r1",
+          "task_id": "APPS_4",
+          "model": "spark",
+          "condition": "C1",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    }
+  ],
+  "C2": [
+    {
+      "condition": "C2",
+      "model": "spark",
+      "task_id": "APPS_0",
+      "rounds": [
+        {
+          "sample_id": "spark_C2_APPS_0_r1",
+          "task_id": "APPS_0",
+          "model": "spark",
+          "condition": "C2",
+          "code": "def reverse_words(word):\n    return word[::-1]\n\ndef solve(t, test_cases):\n    for i in range(t):\n        n = int(input())\n        words = [int(x) for x in input().split()]\n        if len(set(words)) != n:\n            print('-1')\n            continue\n        result = []\n        for j in range(n):\n            if words[j] == 0:\n                result.append(j + 1)\n            else:\n                result.append(reverse_words(words[j]))\n        print(*result)\n\nif __name__ == '__main__':\n    t = int(input())\n    for _ in range(t):\n        solve(_, input().strip().split())",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_0_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1\n3\n-1\n0\n\n2\n1 2",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp1q_gvejr.py\", line 22, in <module>\r\n    solve(_, input().strip().split())\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp1q_gvejr.py\", line 16, in solve\r\n    result.append(reverse_words(words[j]))\r\n                  ^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp1q_gvejr.py\", line 2, in reverse_words\r\n    return word[::-1]\r\n           ~~~~^^^^^^\r\nTypeError: 'int' object is not subscriptable\r\n",
+              "runtime_ms": 52.393299993127584,
+              "error_type": "runtime_error",
+              "severity": "critical"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C2_APPS_0_r1",
+          "task_id": "APPS_0",
+          "model": "spark",
+          "condition": "C2",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C2",
+      "model": "spark",
+      "task_id": "APPS_1",
+      "rounds": [
+        {
+          "sample_id": "spark_C2_APPS_1_r1",
+          "task_id": "APPS_1",
+          "model": "spark",
+          "condition": "C2",
+          "code": "from collections import deque\n\ndef diagonal_moves(q, queries):\n    n = len(queries)\n    visited = set()\n    queue = deque([(0, 0, 0)])\n    max_diagonal_moves = 0\n\n    for i in range(n):\n        while queue and queries[i][1] - queries[queue[0][1]] != queries[i][2]:\n            x1, y1, k1 = queue.popleft()\n            if (x1, y1) not in visited:\n                visited.add((x1, y1))\n                queue.append((x1, y1, k1 + 1))\n\n        if queries[i][1] - queries[queue[0][1]] == queries[i][2]:\n            max_diagonal_moves = max(max_diagonal_moves, queries[i][2])\n\n        queue.append((queries[i][0], queries[i][1], queries[i][2]))\n\n    return max_diagonal_moves if max_diagonal_moves > 0 else -1\n\n# Read input from standard input\ninput_data = list(map(int, input().split()))\nq = int(input_data[0])\nqueries = [list(map(int, input().split())) for _ in range(q)]\n\n# Calculate the maximum number of diagonal moves\nresult = diagonal_moves(q, queries)\nprint(result)",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_1_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1\n6\n-1",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpcxf1q_h5.py\", line 29, in <module>\r\n    result = diagonal_moves(q, queries)\r\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpcxf1q_h5.py\", line 10, in diagonal_moves\r\n    while queue and queries[i][1] - queries[queue[0][1]] != queries[i][2]:\r\n                    ~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~\r\nTypeError: unsupported operand type(s) for -: 'int' and 'list'\r\n",
+              "runtime_ms": 57.60279999230988,
+              "error_type": "runtime_error",
+              "severity": "critical"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C2_APPS_1_r1",
+          "task_id": "APPS_1",
+          "model": "spark",
+          "condition": "C2",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C2",
+      "model": "spark",
+      "task_id": "APPS_2",
+      "rounds": [
+        {
+          "sample_id": "spark_C2_APPS_2_r1",
+          "task_id": "APPS_2",
+          "model": "spark",
+          "condition": "C2",
+          "code": "def find_sequence(t, n):\n    sequences = []\n    for _ in range(t):\n        n = int(input())\n        a, b, c = map(int, input().split())\n        sequences.append([a, b, c])\n    return sequences\n\ndef print_sequences(sequences):\n    for i, sequence in enumerate(sequences):\n        print(f\"{i+1} {sequence[0]} {sequence[1]} {sequence[2]}\")\n\nif __name__ == \"__main__\":\n    t = int(input())\n    n = int(input())\n    sequences = find_sequence(t, n)\n    print_sequences(sequences)",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_2_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1 2 3\n1 2 1 2\n1 3 4 1 2 1 4\n1 2 3\n1 2 1 2 3 2 3 1 3 2",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp33seyxib.py\", line 16, in <module>\r\n    sequences = find_sequence(t, n)\r\n                ^^^^^^^^^^^^^^^^^^^\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp33seyxib.py\", line 4, in find_sequence\r\n    n = int(input())\r\n        ^^^^^^^^^^^^\r\nValueError: invalid literal for int() with base 10: '1 1 1'\r\n",
+              "runtime_ms": 50.52859999705106,
+              "error_type": "runtime_error",
+              "severity": "critical"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C2_APPS_2_r1",
+          "task_id": "APPS_2",
+          "model": "spark",
+          "condition": "C2",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C2",
+      "model": "spark",
+      "task_id": "APPS_3",
+      "rounds": [
+        {
+          "sample_id": "spark_C2_APPS_3_r1",
+          "task_id": "APPS_3",
+          "model": "spark",
+          "condition": "C2",
+          "code": "def max_difference(t, test_cases):\n    max_diff = 0\n    for i in range(t):\n        n, k = test_cases[i]\n        a = [int(x) for x in input().split()]\n        min_a = min(a)\n        max_a = max(a)\n        diff = max_a - min_a\n        max_diff = max(max_diff, diff)\n    return max_diff\n\nt = int(input())\ntest_cases = []\nfor _ in range(t):\n    n, k = map(int, input().split())\n    test_cases.append((n, k))\n\nprint(max_difference(t, test_cases))",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_3_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "10\n0",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpdtgcgj3p.py\", line 15, in <module>\r\n    n, k = map(int, input().split())\r\n    ^^^^\r\nValueError: too many values to unpack (expected 2)\r\n",
+              "runtime_ms": 53.9396999811288,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C2_APPS_3_r1",
+          "task_id": "APPS_3",
+          "model": "spark",
+          "condition": "C2",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C2",
+      "model": "spark",
+      "task_id": "APPS_4",
+      "rounds": [
+        {
+          "sample_id": "spark_C2_APPS_4_r1",
+          "task_id": "APPS_4",
+          "model": "spark",
+          "condition": "C2",
+          "code": "from collections import Counter\n\ndef is_beautiful(p):\n    n = len(p)\n    counter = Counter(p)\n    for i in range(1, n):\n        if counter[p[i]] > 0 and counter[p[i-1]] > 0:\n            return False\n    return True\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    p = list(map(int, input().split()))\n    print(''.join(['1' if is_beautiful(p) else '0' for _ in range(n)]))",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_4_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "101011\n11111\n1001",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 57.123900012811646,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C2_APPS_4_r1",
+          "task_id": "APPS_4",
+          "model": "spark",
+          "condition": "C2",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    }
+  ],
+  "C3": [
+    {
+      "condition": "C3",
+      "model": "spark",
+      "task_id": "APPS_0",
+      "rounds": [
+        {
+          "sample_id": "spark_C3_APPS_0_r1",
+          "task_id": "APPS_0",
+          "model": "spark",
+          "condition": "C3",
+          "code": "def reverse_words(word):\n    return word[::-1]\n\ndef solve(t, test_cases):\n    for i in range(t):\n        n = int(input())\n        words = [int(x) for x in input().split()]\n        if len(set(words)) != n:\n            print('-1')\n            continue\n        result = []\n        for j in range(n):\n            if words[j] == 0:\n                result.append(j + 1)\n            else:\n                result.append(reverse_words(words[j]))\n        print(*result)\n\nif __name__ == '__main__':\n    t = int(input())\n    for _ in range(t):\n        solve(_, input().strip().split())",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_0_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1\n3\n-1\n0\n\n2\n1 2",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpmexq98fu.py\", line 22, in <module>\r\n    solve(_, input().strip().split())\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpmexq98fu.py\", line 16, in solve\r\n    result.append(reverse_words(words[j]))\r\n                  ^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmpmexq98fu.py\", line 2, in reverse_words\r\n    return word[::-1]\r\n           ~~~~^^^^^^\r\nTypeError: 'int' object is not subscriptable\r\n",
+              "runtime_ms": 51.15079999086447,
+              "error_type": "runtime_error",
+              "severity": "critical"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C3_APPS_0_r1",
+          "task_id": "APPS_0",
+          "model": "spark",
+          "condition": "C3",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C3",
+      "model": "spark",
+      "task_id": "APPS_1",
+      "rounds": [
+        {
+          "sample_id": "spark_C3_APPS_1_r1",
+          "task_id": "APPS_1",
+          "model": "spark",
+          "condition": "C3",
+          "code": "from collections import deque\n\ndef diagonal_moves(q, queries):\n    n = len(queries)\n    visited = set()\n    max_diagonal_moves = 0\n\n    for i in range(n):\n        x, y, k = queries[i]\n        if (x, y) not in visited:\n            visited.add((x, y))\n            queue = deque([(x, y)])\n            while queue:\n                x, y = queue.popleft()\n                if x == n and y == m:\n                    return -1\n                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:\n                    nx, ny = x + dx, y + dy\n                    if 0 <= nx < n and 0 <= ny < m and (nx, ny) not in visited:\n                        visited.add((nx, ny))\n                        queue.append((nx, ny))\n                        if k > 0:\n                            k -= 1\n                        elif k < k_i:\n                            k += 1\n                        else:\n                            max_diagonal_moves = max(max_diagonal_moves, k)\n\n    return max_diagonal_moves\n\n# Read input from stdin\nq = int(input())\nqueries = []\nfor _ in range(q):\n    n, m, k = map(int, input().split())\n    queries.append((n, m, k))\n\n# Write output to stdout\nprint(diagonal_moves(q, queries))",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_1_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1\n6\n-1",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 62.68099998123944,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C3_APPS_1_r1",
+          "task_id": "APPS_1",
+          "model": "spark",
+          "condition": "C3",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C3",
+      "model": "spark",
+      "task_id": "APPS_2",
+      "rounds": [
+        {
+          "sample_id": "spark_C3_APPS_2_r1",
+          "task_id": "APPS_2",
+          "model": "spark",
+          "condition": "C3",
+          "code": "def find_sequence(t, n):\n    sequences = []\n    for _ in range(t):\n        n = int(input())\n        a, b, c = map(int, input().split())\n        sequences.append([a, b, c])\n    return sequences\n\ndef solve(sequences):\n    result = []\n    for sequence in sequences:\n        if len(set(sequence)) == 3:\n            result.append(sequence)\n    return result\n\nif __name__ == \"__main\":\n    t = int(input())\n    n = int(input())\n    sequences = find_sequence(t, n)\n    result = solve(sequences)\n    for p in result:\n        print(' '.join(map(str, p)))",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_2_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "1 2 3\n1 2 1 2\n1 3 4 1 2 1 4\n1 2 3\n1 2 1 2 3 2 3 1 3 2",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 53.58549999073148,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C3_APPS_2_r1",
+          "task_id": "APPS_2",
+          "model": "spark",
+          "condition": "C3",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C3",
+      "model": "spark",
+      "task_id": "APPS_3",
+      "rounds": [
+        {
+          "sample_id": "spark_C3_APPS_3_r1",
+          "task_id": "APPS_3",
+          "model": "spark",
+          "condition": "C3",
+          "code": "def max_difference(t, test_cases):\n    for _ in range(t):\n        n, k = map(int, input().split())\n        a = list(map(int, input().split()))\n        max_a = max(a)\n        min_a = min(a)\n        diff = max_a - min_a\n        print(diff)\n\n# Test cases\ntest_cases = [\n    [4, 1],\n    [5, 5, 5, 5]\n]\n\nmax_difference(2, test_cases)",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_3_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "10\n0",
+              "actual_output": null,
+              "error": "Traceback (most recent call last):\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp66wze1su.py\", line 16, in <module>\r\n    max_difference(2, test_cases)\r\n  File \"C:\\Users\\Anthony\\AppData\\Local\\Temp\\tmp66wze1su.py\", line 3, in max_difference\r\n    n, k = map(int, input().split())\r\n    ^^^^\r\nValueError: not enough values to unpack (expected 2, got 1)\r\n",
+              "runtime_ms": 53.197800007183105,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C3_APPS_3_r1",
+          "task_id": "APPS_3",
+          "model": "spark",
+          "condition": "C3",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    },
+    {
+      "condition": "C3",
+      "model": "spark",
+      "task_id": "APPS_4",
+      "rounds": [
+        {
+          "sample_id": "spark_C3_APPS_4_r1",
+          "task_id": "APPS_4",
+          "model": "spark",
+          "condition": "C3",
+          "code": "from collections import Counter\n\ndef is_beautiful(p):\n    n = len(p)\n    counter = Counter(p)\n    return all(counter[i] == 1 for i in range(1, n))\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    p = list(map(int, input().split()))\n    if is_beautiful(p):\n        print('10' * n)\n    else:\n        print('0' * n)",
+          "explanation": "",
+          "overall_pass_rate": 0.0,
+          "test_results": [
+            {
+              "test_id": "APPS_4_apps0",
+              "passed": false,
+              "kind": "apps",
+              "expected_output": "101011\n11111\n1001",
+              "actual_output": null,
+              "error": "stdout mismatch (stderr='')",
+              "runtime_ms": 51.87110000406392,
+              "error_type": "runtime_error",
+              "severity": "moderate"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "sample_id": "spark_C3_APPS_4_r1",
+          "task_id": "APPS_4",
+          "model": "spark",
+          "condition": "C3",
+          "explanation": "",
+          "assertiveness_level": 2,
+          "annotator_id": "auto_regex",
+          "annotation_note": "dl_cnn",
+          "round_number": 1
+        }
+      ]
+    }
+  ]
+}
