@@ -266,6 +266,30 @@ python main.py --phase 4 --config configs/experiment.yaml   # tables + figures
 python main.py --phase all --config configs/experiment.yaml
 ```
 
+**When DL blocks are enabled in YAML (`assertiveness_dl.enabled` / `severity_dl.enabled`):**
+
+```bash
+# 0) optional GPU check
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+
+# 1) train assertiveness model (Channel A)
+python scripts/train_assertiveness_dl.py \
+  --inputs data/annotations/<run_slug>/auto_annotations.jsonl \
+  --out models/assertiveness_cnn.pt \
+  --device cuda
+
+# 2) train severity model (Channel B)
+python scripts/train_severity_dl.py \
+  --inputs data/processed/<run_slug>/baseline_results.jsonl data/processed/<run_slug>/strategy_execution_records.jsonl \
+  --out models/severity_cnn.pt \
+  --device cuda
+
+# 3) run full pipeline (Phase 2/3 will try loading DL checkpoints)
+python main.py --phase all --config configs/experiment.yaml
+```
+
+> Note: `--phase all` includes DL inference paths, but true DL inference happens only when the corresponding checkpoint file exists; otherwise each module falls back to rules.
+
 **Artifacts:** with `raw_run_id: auto`, raw files are versioned as `data/raw/tasks_{dataset}_{baseline_slug}.jsonl` and paired `test_suites_*.jsonl`; Phase 2–4 outputs follow the same slug under `data/processed/`, `results/`, etc. (see §3.6).
 
 **Switching datasets:** change `tasks.dataset` and ensure the target `task_file` either does not exist or `always_refresh: true`, or use `raw_run_id: auto` so each dataset/model combo writes to distinct files.
@@ -309,8 +333,18 @@ Each LLM response contains a natural-language explanation. This explanation is c
 **Annotation protocol (current scope):**
 - **Automatic annotation only** (no human annotators required for the default pipeline).
 - **Who labels:** the pipeline’s `LinguisticAnnotator` (software component in the repo), not a person.
-- **How:** rule-based **regex** matching over the model’s natural-language explanation: tentative phrases → level 1; strongly assertive phrases → level 3; moderately assertive → level 2; if nothing matches, default **level 2** (moderate). Matched patterns are recorded in `annotation_note` for auditability.
+- **How (default):** rule-based **regex** matching over the model’s natural-language explanation: tentative phrases → level 1; strongly assertive phrases → level 3; moderately assertive → level 2; if nothing matches, default **level 2** (moderate). Matched patterns are recorded in `annotation_note` for auditability.
+- **How (optional DL mode):** if `assertiveness_dl.enabled: true` and the checkpoint exists, `LinguisticAnnotator` uses `AssertivenessPredictor` (`src/module2_detection/assertiveness_dl.py`) to predict level 1/2/3 from explanation text; if load/inference fails, it **falls back to regex** automatically.
 - **Optional extension (not required to run phases 1–4):** a stratified human subsample with two annotators and **Cohen's κ** (target κ ≥ 0.7) for rubric validation, as in §10.
+
+#### Assertiveness classification — regex baseline + optional deep learning
+
+- **Task:** classify explanation text into assertiveness level **1 / 2 / 3**.
+- **Model (optional):** token-level **1-D CNN** classifier, implemented in `src/module2_detection/assertiveness_dl.py`.
+- **Configuration:** YAML block `assertiveness_dl` (`enabled`, `checkpoint`, `device`, optional `max_len` / `emb_dim` / `conv_dim`).
+- **Training:** `python scripts/train_assertiveness_dl.py --inputs <annotation_jsonl...> --out models/assertiveness_cnn.pt [--device cuda]`.
+- **Training data:** annotation rows containing `explanation` + `assertiveness_level` (bootstrapped from `auto_annotations.jsonl` and/or replaced by human labels).
+- **Runtime safety:** if torch/checkpoint is unavailable, the pipeline keeps running with regex labels.
 
 ### 4.3 Channel B — Execution Correctness
 
@@ -654,3 +688,30 @@ data/
     ├── human_annotator_B.csv
     └── merged_annotations.jsonl
 ```
+
+---
+
+## 12. Deep-Learning Models in This Repo (FAQ)
+
+### 12.1 What each model is used for
+
+- **Assertiveness model (`models/assertiveness_cnn.pt`)**  
+  Input: natural-language explanation text.  
+  Output: assertiveness level **1 / 2 / 3** for OGS (`assertiveness_level >= 2` counts as assertive).
+
+- **Severity model (`models/severity_cnn.pt`)**  
+  Input: failed-case text `error_type + "\n" + error traceback`.  
+  Output: failure severity **minor / moderate / critical** per failed test case.
+
+### 12.2 What data they are trained on
+
+- **Assertiveness model:** trained from annotation JSONL rows with `explanation` + `assertiveness_level` (auto labels and/or human labels). Script: `scripts/train_assertiveness_dl.py`.
+- **Severity model:** trained from execution JSONL rows (`baseline_results.jsonl`, `strategy_execution_records.jsonl`) using pseudo-label teacher `rule_severity`. Script: `scripts/train_severity_dl.py`.
+
+### 12.3 Can we train on MHPP and apply to APPS?
+
+Yes. Both are regular PyTorch checkpoints and can be reused across datasets:
+
+- You can train on **MHPP** outputs first, then run inference in **APPS** experiments.
+- In reporting, clearly state this as cross-dataset transfer (e.g., “trained on MHPP, inferred on APPS”).
+- For stronger rigor, compare in-domain vs cross-domain performance when possible.

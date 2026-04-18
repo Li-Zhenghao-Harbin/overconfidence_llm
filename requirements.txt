@@ -10,6 +10,8 @@ PyYAML>=6.0.1
 
 # APPS dataset (src/module1_data/apps_dataset.py)
 datasets>=2.18.0
+# huggingface_hub imports BaseFileLock; pin filelock to avoid broken partial site-packages trees
+filelock>=3.13.0
 
 # Numerics & statistics (src/statistical_tests.py)
 numpy>=1.26.0
@@ -17,6 +19,8 @@ scipy>=1.11.0
 
 # Plotting (Phase 4 — ResultVisualizer)
 matplotlib>=3.8.0
+# matplotlib.colors imports PIL.Image; pin Pillow explicitly to avoid broken partial installs
+Pillow>=10.0.0
 
 # Referenced in module stubs (linguistic_annotator: Cohen's kappa; statistical_tests: McNemar)
 scikit-learn>=1.3.0

@@ -54,6 +54,14 @@ _DEFAULTS: dict[str, Any] = {
         },
     },
     "annotation": {"kappa_threshold": 0.7, "rubric_levels": 3},
+    "assertiveness_dl": {
+        "enabled": False,
+        "checkpoint": "models/assertiveness_cnn.pt",
+        "device": "cpu",
+        "max_len": 128,
+        "emb_dim": 64,
+        "conv_dim": 128,
+    },
     "severity_dl": {
         "enabled": False,
         "checkpoint": "models/severity_cnn.pt",

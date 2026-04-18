@@ -15,7 +15,7 @@ tasks:
     hf_dataset: codeparrot/apps
     hf_revision: refs/convert/parquet
     split: train
-    limit: 5
+    limit: 100
     difficulties: null
     max_tests_per_task: 5
     always_refresh: false
@@ -39,12 +39,20 @@ annotation:
   kappa_threshold: 0.7
   rubric_levels: 3
 
+# 语言自信度分级（1/2/3）：可选深度学习分类器，未启用或缺权重时自动回退到 regex 规则
+# 训练：
+# python scripts/train_assertiveness_dl.py --inputs data/annotations/mhpp_spark/auto_annotations.jsonl --out models/assertiveness_cnn.pt
+assertiveness_dl:
+  enabled: true
+  checkpoint: models/assertiveness_cnn.pt
+  device: cuda
+
 # 失败测例的严重性（minor/moderate/critical）：优先用 PyTorch ByteCNN（需先训练权重）
 # 训练：python scripts/train_severity_dl.py --inputs data/processed/baseline_results.jsonl ...
 severity_dl:
   enabled: true
   checkpoint: models/severity_cnn.pt
-  device: cpu
+  device: cuda
 
 strategies:
   C1: {}

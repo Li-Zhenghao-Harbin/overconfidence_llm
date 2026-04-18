@@ -8,6 +8,8 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from src.module2_detection.assertiveness_dl import AssertivenessPredictor
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +60,7 @@ class LinguisticAnnotator:
         self.config = config
         self.kappa_threshold = config["annotation"]["kappa_threshold"]
         self.rubric_levels = config["annotation"]["rubric_levels"]
+        self._dl = AssertivenessPredictor(config)
 
     def annotate_batch(self, results: list[dict]) -> list[AnnotationRecord]:
         out: list[AnnotationRecord] = []
@@ -85,6 +88,13 @@ class LinguisticAnnotator:
         return out
 
     def auto_annotate(self, explanation: str) -> tuple[int, str]:
+        if self._dl.available:
+            try:
+                level = self._dl.predict_level(explanation or "")
+                return level, "dl_cnn"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("assertiveness DL inference failed; fallback to regex: %s", e)
+
         text = explanation.lower()
         matched: list[str] = []
 
