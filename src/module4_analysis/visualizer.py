@@ -1,11 +1,20 @@
-"""Module 4 — Figures (stub)."""
+"""Module 4 — Figures.
+
+Generates a small set of core figures described in WORKFLOW.md.
+"""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
+import json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
 from src.module4_analysis.statistical_tests import AnalysisReport
+from src.utils import pipeline_io as pio
 
 logger = logging.getLogger(__name__)
 
@@ -15,5 +24,343 @@ class ResultVisualizer:
         self.config = config
 
     def generate_all_figures(self, stats: AnalysisReport) -> None:
-        Path("results/figures").mkdir(parents=True, exist_ok=True)
-        logger.info("ResultVisualizer stub: no PNG/PDF generated.")
+        out = self.config.get("outputs") or {}
+        fig_dir = Path(out.get("figures_dir", "results/figures"))
+        fig_dir.mkdir(parents=True, exist_ok=True)
+
+        tables_dir = Path(out.get("tables_dir", "results/tables"))
+        summary_path = tables_dir / "summary_metrics.csv"
+        round_path = tables_dir / "round_summary.csv"
+
+        if summary_path.is_file():
+            df = pd.read_csv(summary_path)
+            self._ogs_by_condition(df, fig_dir / "ogs_by_condition.png")
+            self._correctness_by_complexity(df, fig_dir / "correctness_by_complexity.png")
+
+        if round_path.is_file():
+            df_r = pd.read_csv(round_path)
+            self._calibration_improvement(df_r, fig_dir / "calibration_improvement.png")
+
+        # Additional figures derived from raw processed data (no re-running phases).
+        self._calibration_curves(fig_dir / "calibration_curves.png")
+        self._repair_efficiency(fig_dir / "repair_efficiency_bar.png")
+        self._hallucination_heatmap(fig_dir / "hallucination_heatmap.png")
+        self._confusion_matrix_oc(fig_dir / "confusion_matrix_oc.png")
+
+        logger.info("Figures generated under %s/", fig_dir)
+
+    def _ogs_by_condition(self, df: pd.DataFrame, out: Path) -> None:
+        # Aggregate across complexity
+        agg = df.groupby("condition").agg(ogs=("ogs", "mean")).reset_index()
+        plt.figure(figsize=(6, 4))
+        plt.bar(agg["condition"], agg["ogs"])
+        plt.ylim(0, max(0.05, float(agg["ogs"].max()) + 0.05))
+        plt.title("OGS by Condition (final)")
+        plt.ylabel("OGS")
+        plt.xlabel("Condition")
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _correctness_by_complexity(self, df: pd.DataFrame, out: Path) -> None:
+        pivot = (
+            df.pivot_table(
+                index="complexity", columns="condition", values="pass_rate", aggfunc="mean"
+            )
+            .fillna(0.0)
+            .reindex(index=["basic", "medium", "complex"], fill_value=0.0)
+        )
+        ax = pivot.plot(kind="bar", figsize=(8, 4))
+        ax.set_title("Pass Rate by Complexity × Condition (final)")
+        ax.set_ylabel("Pass rate")
+        ax.set_xlabel("Complexity")
+        ax.set_ylim(0, 1.05)
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _calibration_improvement(self, df_r: pd.DataFrame, out: Path) -> None:
+        # Line plot of OGS by round for C2/C3
+        plt.figure(figsize=(7, 4))
+        for cond in ["C2", "C3"]:
+            sub = df_r[df_r["condition"] == cond].sort_values("round_number")
+            if sub.empty:
+                continue
+            plt.plot(sub["round_number"], sub["ogs"], marker="o", label=cond)
+        plt.title("OGS by Round (C2/C3)")
+        plt.xlabel("Round")
+        plt.ylabel("OGS")
+        plt.ylim(0, 1.0)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _calibration_curves(self, out: Path) -> None:
+        """Assertiveness level vs mean pass rate (final per condition)."""
+        import json
+
+        def read_jsonl(p: Path) -> list[dict]:
+            if not p.is_file():
+                return []
+            rows = []
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+            return rows
+
+        # Baseline (needs annotations)
+        base = read_jsonl(pio.baseline_results_path())
+        ann = {
+            r["sample_id"]: r.get("assertiveness_level")
+            for r in read_jsonl(pio.auto_annotations_path())
+            if "sample_id" in r
+        }
+        base_rows = []
+        for r in base:
+            base_rows.append(
+                {
+                    "condition": "C0",
+                    "assertiveness_level": int(ann.get(r.get("sample_id"), 0) or 0),
+                    "overall_pass_rate": float(r.get("overall_pass_rate", 0.0)),
+                }
+            )
+
+        strat = read_jsonl(pio.strategy_execution_records_path())
+        df_s = pd.DataFrame(strat)
+        if not df_s.empty:
+            # final round per task×cond
+            df_s["round_number"] = df_s["round_number"].astype(int)
+            df_s = (
+                df_s.sort_values(["condition", "model", "task_id", "round_number"])
+                .groupby(["condition", "model", "task_id"], as_index=False)
+                .tail(1)
+            )
+            strat_rows = df_s[
+                ["condition", "assertiveness_level", "overall_pass_rate"]
+            ].to_dict(orient="records")
+        else:
+            strat_rows = []
+
+        df = pd.DataFrame(base_rows + strat_rows)
+        if df.empty:
+            return
+        df["assertiveness_level"] = df["assertiveness_level"].fillna(0).astype(int)
+        df["overall_pass_rate"] = df["overall_pass_rate"].astype(float)
+
+        plt.figure(figsize=(7, 4))
+        for cond in ["C0", "C1", "C2", "C3"]:
+            sub = df[df["condition"] == cond]
+            if sub.empty:
+                continue
+            agg = (
+                sub.groupby("assertiveness_level")["overall_pass_rate"]
+                .mean()
+                .reset_index()
+                .sort_values("assertiveness_level")
+            )
+            plt.plot(
+                agg["assertiveness_level"],
+                agg["overall_pass_rate"],
+                marker="o",
+                label=cond,
+            )
+        plt.title("Calibration Curves (assertiveness vs pass rate)")
+        plt.xlabel("Assertiveness level")
+        plt.ylabel("Mean pass rate")
+        plt.ylim(0, 1.05)
+        plt.xticks([1, 2, 3])
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _repair_efficiency(self, out: Path) -> None:
+        """Mean rounds to reach correctness for C2/C3 (−1 excluded)."""
+        import json
+
+        p = pio.strategy_execution_records_path()
+        if not p.is_file():
+            return
+        rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return
+        df["round_number"] = df["round_number"].astype(int)
+        df["overall_pass_rate"] = df["overall_pass_rate"].astype(float)
+
+        eff_rows = []
+        for cond in ["C2", "C3"]:
+            sub = df[df["condition"] == cond].sort_values(["model", "task_id", "round_number"])
+            if sub.empty:
+                continue
+            for (m, t), g in sub.groupby(["model", "task_id"]):
+                reached = g[g["overall_pass_rate"] == 1.0]
+                if reached.empty:
+                    continue
+                eff_rows.append({"condition": cond, "repair_efficiency": int(reached["round_number"].iloc[0])})
+
+        eff = pd.DataFrame(eff_rows)
+        plt.figure(figsize=(5, 4))
+        if eff.empty:
+            plt.title("Repair efficiency (no successes)")
+            plt.tight_layout()
+            plt.savefig(out, dpi=200)
+            plt.close()
+            return
+        agg = eff.groupby("condition")["repair_efficiency"].mean().reindex(["C2", "C3"])
+        plt.bar(agg.index, agg.values)
+        plt.title("Repair Efficiency (mean rounds to correct)")
+        plt.xlabel("Condition")
+        plt.ylabel("Mean rounds")
+        plt.ylim(0, max(1.0, float(agg.max()) + 0.5))
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _read_jsonl(self, p: Path) -> list[dict]:
+        if not p.is_file():
+            return []
+        rows: list[dict] = []
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+        return rows
+
+    def _hallucination_heatmap(self, out: Path) -> None:
+        """Heatmap: error_type × condition frequency (final round only for strategies)."""
+        baseline = self._read_jsonl(pio.baseline_results_path())
+
+        strat = self._read_jsonl(pio.strategy_execution_records_path())
+        df_s = pd.DataFrame(strat)
+        if not df_s.empty:
+            df_s = (
+                df_s.sort_values(["condition", "model", "task_id", "round_number"])
+                .groupby(["condition", "model", "task_id"], as_index=False)
+                .tail(1)
+            )
+
+        # Aggregate per condition × error_type from failed test cases
+        conds = ["C0", "C1", "C2", "C3"]
+        all_error_types: set[str] = set()
+        counts: dict[str, dict[str, int]] = {c: {} for c in conds}
+
+        def add_from_records(records: list[dict], default_condition: str) -> None:
+            for r in records:
+                cond = r.get("condition", default_condition)
+                if cond not in counts:
+                    continue
+                for tr in (r.get("test_results") or []):
+                    if tr.get("passed") is True:
+                        continue
+                    et = str(tr.get("error_type") or "").strip()
+                    if not et:
+                        continue
+                    all_error_types.add(et)
+                    counts[cond][et] = counts[cond].get(et, 0) + 1
+
+        add_from_records(baseline, "C0")
+        if not df_s.empty:
+            add_from_records(df_s.to_dict(orient="records"), "C1")
+
+        error_types = sorted(all_error_types)
+        if not error_types:
+            # Still create an empty figure for reproducibility.
+            plt.figure(figsize=(6, 4))
+            plt.title("Hallucination Heatmap (no failed samples)")
+            plt.tight_layout()
+            plt.savefig(out, dpi=200)
+            plt.close()
+            return
+
+        mat = np.zeros((len(conds), len(error_types)), dtype=int)
+        for i, c in enumerate(conds):
+            for j, et in enumerate(error_types):
+                mat[i, j] = counts[c].get(et, 0)
+
+        plt.figure(figsize=(8, 4.5))
+        im = plt.imshow(mat, aspect="auto", cmap="Blues")
+        plt.colorbar(im, fraction=0.046, pad=0.04)
+        plt.xticks(range(len(error_types)), error_types, rotation=45, ha="right")
+        plt.yticks(range(len(conds)), conds)
+        plt.xlabel("error_type")
+        plt.ylabel("condition")
+        plt.title("Hallucination / Failure Error Types × Condition")
+
+        # Annotate counts
+        for i in range(len(conds)):
+            for j in range(len(error_types)):
+                if mat[i, j] > 0:
+                    plt.text(j, i, str(mat[i, j]), ha="center", va="center", fontsize=8)
+
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()
+
+    def _confusion_matrix_oc(self, out: Path) -> None:
+        """Confusion matrix for OC detection: predicted assertiveness vs actual incorrect."""
+        # Baseline C0: pull assertiveness from auto_annotations
+        baseline = self._read_jsonl(pio.baseline_results_path())
+        ann_rows = self._read_jsonl(pio.auto_annotations_path())
+        ann_map = {r.get("sample_id"): r.get("assertiveness_level") for r in ann_rows}
+
+        strat = self._read_jsonl(pio.strategy_execution_records_path())
+        df_s = pd.DataFrame(strat)
+        if not df_s.empty:
+            df_s = (
+                df_s.sort_values(["condition", "model", "task_id", "round_number"])
+                .groupby(["condition", "model", "task_id"], as_index=False)
+                .tail(1)
+            )
+        strat_rows = df_s.to_dict(orient="records") if not df_s.empty else []
+
+        tp = fp = tn = fn = 0
+
+        def update(pred_overconfident: bool, actual_incorrect: bool) -> None:
+            nonlocal tp, fp, tn, fn
+            if pred_overconfident and actual_incorrect:
+                tp += 1
+            elif pred_overconfident and not actual_incorrect:
+                fp += 1
+            elif (not pred_overconfident) and (not actual_incorrect):
+                tn += 1
+            else:
+                fn += 1
+
+        # Baseline rows
+        for r in baseline:
+            sid = r.get("sample_id")
+            assert_level = int(ann_map.get(sid, 0) or 0)
+            pred = assert_level >= 2
+            incorrect = float(r.get("overall_pass_rate", 0.0) or 0.0) < 1.0
+            update(pred, incorrect)
+
+        # Strategy rows (already include assertiveness_level)
+        for r in strat_rows:
+            assert_level = int(r.get("assertiveness_level", 0) or 0)
+            pred = assert_level >= 2
+            incorrect = float(r.get("overall_pass_rate", 0.0) or 0.0) < 1.0
+            update(pred, incorrect)
+
+        mat = np.array([[tn, fp], [fn, tp]], dtype=int)
+        labels = [["Actual Correct", "Actual Incorrect"], ["Pred Not OC", "Pred OC"]]
+
+        plt.figure(figsize=(5.5, 4.2))
+        im = plt.imshow(mat, cmap="Blues", aspect="auto")
+        plt.colorbar(im, fraction=0.046, pad=0.04)
+        plt.xticks([0, 1], ["Pred Not OC", "Pred OC"])
+        plt.yticks([0, 1], ["Actual Correct", "Actual Incorrect"])
+        plt.xlabel("Prediction")
+        plt.ylabel("Actual")
+        plt.title("Overconfidence Detection Confusion Matrix")
+
+        # Annotate
+        for i in range(2):
+            for j in range(2):
+                plt.text(j, i, str(mat[i, j]), ha="center", va="center", fontsize=12)
+
+        plt.tight_layout()
+        plt.savefig(out, dpi=200)
+        plt.close()

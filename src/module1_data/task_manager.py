@@ -181,6 +181,6 @@ class TaskManager:
                 "One-level flatten",
                 "Flatten a list one level: [[1,2], 3, [4]] -> [1, 2, 3, 4].",
                 "def flatten_once(nested: list) -> list:",
-                [{"input": [[[1, 2], 3, [4]]], "expected_output": [1, 2, 3, 4]}],
+                [{"input": [[1, 2], 3, [4]], "expected_output": [1, 2, 3, 4]}],
             ),
         ]

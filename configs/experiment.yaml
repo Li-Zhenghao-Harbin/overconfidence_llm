@@ -6,29 +6,73 @@ execution:
 tasks:
   task_file: data/raw/tasks.jsonl
   tasks_per_level: 3
+  # 原始数据文件名：null = 使用上面的 task_file / 自动推导 suite_file（会覆盖同路径文件）
+  # auto = 使用 tasks_{dataset}_{首个baseline模型名}.jsonl + test_suites_{...}.jsonl，避免覆盖默认文件
+  raw_run_id: auto
+  # builtin | humaneval | mhpp（MHPP 公开 JSONL 无隐藏测例，本地为 smoke 执行，见 mhpp_dataset 模块注释）
+  dataset: mhpp
+  humaneval:
+    url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
+    limit: 0
+    always_refresh: false
+  mhpp:
+    url: https://raw.githubusercontent.com/SparksofAGI/MHPP/main/data/MHPP.jsonl
+    # 0 = 全量 210；子集便于迭代
+    limit: 210
+    always_refresh: false
+
+# Phase 2–4 落盘与图表目录。省略或与 raw 联动：tasks.raw_run_id 为 auto/自定义时，默认用同一 slug 子目录，避免多模型互相覆盖。
+# run_id: flat = 强制写回 data/processed 与 results 根目录；run_id: auto = 仅用 dataset+模型名子目录（raw 仍可为默认 tasks.jsonl）。
+outputs:
+  run_id: null
 
 annotation:
   kappa_threshold: 0.7
   rubric_levels: 3
 
+# 失败测例的严重性（minor/moderate/critical）：优先用 PyTorch ByteCNN（需先训练权重）
+# 训练：python scripts/train_severity_dl.py --inputs data/processed/baseline_results.jsonl ...
+severity_dl:
+  enabled: true
+  checkpoint: models/severity_cnn.pt
+  device: cpu
+
 strategies:
   C1: {}
   C2:
-    max_rounds: 3
+    max_rounds: 1
   C3:
-    max_rounds: 3
+    max_rounds: 1
 
 analysis:
   significance_level: 0.05
 
-# LLM: 官方 OpenAI 用默认 base_url 即可；讯飞星火 OpenAI 兼容见 .env.example
+# LLM: GitHub Models (OpenAI-compatible)
+# llm:
+#   # GitHub Models OpenAI-compatible endpoint (GitHub Docs quickstart)
+#   base_url: https://models.github.ai/inference
+#   default_model: gpt-4o
+#   temperature: 0.2
+#   max_tokens: 4096
+#   request_timeout_sec: 180
+#   # GitHub Models（免费额度）会限流；遇到 429 / RateLimitError 自动退避重试
+#   max_retries: 8
+#   backoff_max_sec: 60
+
+# models:
+#   baseline:
+#     - name: gpt4o
+#       model: gpt-4o
+
+
+# 讯飞：HTTP 各版本 APIPassword 不同；model 须与密钥所在控制台版本一致，否则易 11200 AppIdNoAuthError
 llm:
-  base_url: null
-  default_model: generalv3.5
+  base_url: https://spark-api-open.xf-yun.com/v1
+  default_model: lite
   temperature: 0.2
   max_tokens: 4096
 
 models:
   baseline:
     - name: spark
-      model: generalv3.5
+      model: lite

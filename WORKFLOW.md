@@ -53,7 +53,7 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 │                             ▼                         ▼                  │
 │                    ┌────────────────────────────────────────┐            │
 │                    │           Module 4                     │            │
-│                    │   Statistical Analysis & Reporting      │            │
+│                    │   Statistical Analysis (tables + PNG)   │            │
 │                    └────────────────────────────────────────┘            │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -62,14 +62,15 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 
 | Path | Contents |
 |---|---|
-| `data/raw/tasks.jsonl` | 9 programming tasks (3 per complexity level) |
-| `data/raw/test_suites.jsonl` | Standard + adversarial test cases per task |
-| `data/processed/baseline_results.jsonl` | C0 execution records |
-| `data/processed/strategy_results.jsonl` | C1/C2/C3 execution records (all rounds) |
-| `data/annotations/` | Human annotation CSV files + auto-annotation JSONL |
-| `results/figures/` | All generated plots (PNG + PDF) |
-| `results/tables/` | Statistical test result tables (CSV + LaTeX) |
-| `results/logs/pipeline.log` | Full execution log |
+| `data/raw/tasks*.jsonl` | Task benchmark used in this run (either the built-in 9 tasks or an imported dataset such as HumanEval). Exact filename comes from `tasks.task_file` / `tasks.raw_run_id` (see §3.5). |
+| `data/raw/test_suites*.jsonl` | Standard + adversarial (or HumanEval bundled) test cases per task. Exact filename from `tasks.suite_file` (auto-derived when using `raw_run_id`). |
+| `data/processed/…/baseline_results.jsonl` | C0 execution records (default: `data/processed/`; with run slug: `data/processed/{slug}/`, see §3.6) |
+| `data/processed/…/strategy_results.jsonl` | C1/C2/C3 strategy results (one row per task×condition; includes all rounds) |
+| `data/processed/…/strategy_execution_records.jsonl` | C1/C2/C3 execution records (one row per round; convenient for RQ3 + plotting) |
+| `data/annotations/…/` | Human annotation CSV files + `auto_annotations.jsonl` (mirrors the same `{slug}` subfolder when versioned) |
+| `results/…/figures/` | All generated plots (PNG) |
+| `results/…/tables/` | Statistical test result tables (CSV) |
+| `results/logs/` | Logs (optional; current default is stdout) |
 
 ---
 
@@ -77,11 +78,20 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 
 ### 3.1 Purpose
 
-Define the 9 programming tasks and build the test suites used across all experimental conditions.
+Define (or import) the programming tasks and build the test suites used across all experimental conditions.
+
+Supported benchmark modes:
+- **Built-in mini benchmark**: 9 tasks (3 per complexity level) for fast iteration.
+- **HumanEval (recommended for final reporting)**: import tasks to increase sample size and external validity.
 
 ### 3.2 Task Taxonomy
 
-Tasks are stratified into three complexity levels to enable moderation analysis (RQ4):
+Tasks are stratified into three complexity levels to enable moderation analysis (RQ4).
+
+- For the **built-in 9 tasks**, complexity is provided directly (basic/medium/complex).
+- For **HumanEval**, the dataset itself does not provide a canonical "complexity" label. We therefore derive
+  a proxy complexity bucket for each task (e.g., by prompt length / signature complexity / token count), and
+  split tasks into three bins (low/medium/high). The exact heuristic must be documented in the experiment report.
 
 | Level | Count | Examples | Key Challenges |
 |---|---|---|---|
@@ -92,7 +102,7 @@ Tasks are stratified into three complexity levels to enable moderation analysis 
 Each task record (JSONL) contains:
 - `task_id`, `complexity`, `domain`, `title`, `description`
 - `function_signature` — the exact Python signature to implement
-- `examples` — 2–3 sample input/output pairs
+- `examples` — 1–3 sample input/output pairs (optional when importing external datasets)
 
 ### 3.3 Test Suite Construction
 
@@ -126,8 +136,72 @@ TestSuiteBuilder.build_all(tasks)
             └── _logical_trap_cases()
             │
             ▼
-    Save → data/raw/test_suites.jsonl
+    Save → `tasks.suite_file` (paired with `tasks.task_file`; often `data/raw/test_suites*.jsonl`)
 ```
+
+### 3.6 Versioned processed / results / annotations (`outputs.run_id`)
+
+When comparing **multiple models** (or multiple runs), Phase 2–4 outputs should not all write to the same files. The pipeline resolves directories after loading YAML:
+
+| `outputs.run_id` | Behaviour |
+|---|---|
+| `null` / omitted | If `tasks.raw_run_id` versions raw files (`auto` or a custom string), use the **same slug** under `data/processed/`, `results/`, `data/annotations/`, and `data/intermediate/`. If raw is flat (`raw_run_id` null), outputs stay flat (legacy layout). |
+| `auto` | Always use `{dataset}_{first_baseline_name_or_model_slug}` as the subdirectory name, even when raw paths are flat. |
+| `flat` | Always use the repository root dirs (`data/processed`, `results`, …) even if raw is versioned. |
+| other string | Custom slug (same rules as `tasks.raw_run_id` custom string). |
+
+Example (recommended for multi-model studies — set both to `auto`):
+
+```yaml
+tasks:
+  raw_run_id: auto
+outputs:
+  run_id: null   # inherit slug from raw; or set run_id: auto explicitly
+```
+
+HumanEval integration (conceptual):
+- Import HumanEval prompts into the `Task` schema and write to `data/raw/tasks.jsonl`.
+- Build/attach executable test cases and write to `data/raw/test_suites.jsonl`.
+  - Note: HumanEval's official evaluation relies on hidden tests. For a fully local pipeline, you must provide
+    an open test suite (e.g., public tests from a compatible harness, or project-defined tests) and clearly
+    document this difference in the report.
+
+### 3.5 HumanEval — concrete import (implemented in repo)
+
+**方式 A — 配置开关（推荐）**：在 `configs/experiment.yaml` 的 `tasks` 段设置 `dataset`，`main.py` 在运行 Phase **1/2/3**（以及 `all`）前会自动准备 `tasks.task_file`：
+
+```yaml
+tasks:
+  task_file: data/raw/tasks.jsonl
+  dataset: humaneval   # builtin | humaneval
+  raw_run_id: auto      # null=使用 task_file 固定路径（会覆盖同文件）；auto=dataset+模型名新文件；也可写任意字符串作后缀
+  humaneval:
+    url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
+    limit: 0           # >0 时只导入前 N 题（smoke test）
+    always_refresh: false  # true 时每次运行都重新下载覆盖 task_file
+```
+
+- `builtin`：不下载；若 `task_file` 不存在，`TaskManager` 会写入内置 9 题。
+- `humaneval`：若 `task_file` 尚不是 HumanEval 格式（或 `always_refresh: true`），则下载并覆盖写入 `task_file`。
+
+然后照常：
+
+```bash
+python main.py --phase 1   # 生成 test_suites.jsonl
+python main.py --phase 2
+```
+
+**方式 B — 手动脚本**（与方式 A 等价，只是不经过 YAML）：
+
+```bash
+python scripts/import_humaneval.py
+python scripts/import_humaneval.py --limit 5
+python main.py --phase 1
+```
+
+Execution note: the runner merges `prompt + model_completion` similarly to the official harness; if the model returns a **full** `def entry_point(...):` implementation, the merge logic replaces the stub starting at the last `def entry_point` occurrence in the prompt.
+
+**切回 builtin 时**：把 `dataset` 改回 `builtin`；若 `task_file` 仍是 HumanEval 内容，请删除该文件或改 `task_file` 路径，否则 `main.py` 会给出警告。
 
 ---
 
@@ -147,22 +221,20 @@ Each LLM response contains a natural-language explanation. This explanation is c
 | 2 | Moderately Assertive | "should work", "handles most cases", one acknowledged limitation | *"This should work for most inputs."* |
 | 1 | Tentative / Calibrated | "might not handle", "I'm not sure about", "consider testing with" | *"I'm not confident about the timeout handling."* |
 
-**Annotation protocol:**
-- Auto-annotation via regex patterns for the full dataset
-- Two human annotators independently label a stratified subsample
-- Inter-annotator agreement computed as **Cohen's Kappa** (κ); target κ ≥ 0.7
-- Disagreements where |level_A − level_B| > 1 are resolved via discussion
+**Annotation protocol (current scope):**
+- **Automatic annotation only** (no human annotators required for the default pipeline).
+- **Who labels:** the pipeline’s `LinguisticAnnotator` (software component in the repo), not a person.
+- **How:** rule-based **regex** matching over the model’s natural-language explanation: tentative phrases → level 1; strongly assertive phrases → level 3; moderately assertive → level 2; if nothing matches, default **level 2** (moderate). Matched patterns are recorded in `annotation_note` for auditability.
+- **Optional extension (not required to run phases 1–4):** a stratified human subsample with two annotators and **Cohen's κ** (target κ ≥ 0.7) for rubric validation, as in §10.
 
 ### 4.3 Channel B — Execution Correctness
 
 Each code snippet is executed against all test cases (standard + adversarial) inside a sandboxed environment:
 
 ```
-Docker container (python:3.11-slim)
-  Memory limit: 256 MB
-  CPU limit:    1 core
-  Network:      disabled (no external calls)
-  Timeout:      10 seconds per test case
+Subprocess sandbox (local Python process)
+  Timeout:      configurable per test case (see `execution.case_timeout_sec`)
+  Note: This project does not require Docker.
 ```
 
 Per test case, the runner records:
@@ -170,6 +242,8 @@ Per test case, the runner records:
 - `actual_output` vs `expected_output`
 - `error` (exception type + traceback if failed)
 - `runtime_ms`
+- `error_type` (rule-based coarse label when failed)
+- `severity` (`minor` / `moderate` / `critical` when failed — ByteCNN if trained + enabled, else rule fallback; empty when passed)
 
 Failures are classified into:
 
@@ -179,19 +253,50 @@ Failures are classified into:
 | `logical_bug` | Code runs but produces wrong outputs |
 | `api_misuse` | Code calls APIs with wrong arguments, wrong order, or wrong assumptions |
 
+#### Error classification — `error_type` (rules) + `severity` (deep learning)
+
+**`error_type` (implemented, rule-based):** each failed test case gets a coarse label from `_classify_error` on the traceback / error string (`compilation_error`, `timeout`, `api_misuse`, `runtime_error`, …). This is fast and deterministic; Phase 4 heatmaps aggregate these labels.
+
+**`severity` (implemented, deep learning with safe fallback):** each failed case also receives **`minor` / `moderate` / `critical`** in the `severity` field.
+- **Model:** a small **byte-level 1-D CNN** over the text `error_type + "\n" + error`, implemented in `src/module2_detection/severity_dl.py` (`SeverityPredictor`).
+- **Configuration:** YAML block `severity_dl` (`enabled`, `checkpoint`, `device`, optional `max_len` / `emb_dim` / `conv_dim`). Default in code has `enabled: false`; enable in `configs/experiment.yaml` when you want DL inference.
+- **Training:** `python scripts/train_severity_dl.py` reads existing JSONL (`baseline_results.jsonl`, `strategy_execution_records.jsonl`, …) and uses **teacher pseudo-labels** from `rule_severity` (same module) so you can train **without hand-labeled severity**. Weights are written to `models/severity_cnn.pt` (gitignored).
+- **Runtime:** if `severity_dl.enabled` is true but **torch** is missing or the **checkpoint** is absent, the pipeline **falls back to `rule_severity`** and continues.
+
+**Optional future work (`error_type` via DL):** replace `_classify_error` with a second classifier using code snippets + structured failure features; same JSONL bootstrap pattern as severity.
+
 ### 4.4 OGS Computation
+
+Let `assertive = (assertiveness_level >= 2)`.
+
+**Overall (headline OGS, all test kinds combined):**
 
 ```
 For each sample:
-    is_overconfident = (assertiveness_level >= 2) AND (overall_pass_rate < 1.0)
+    is_overconfident = assertive AND (overall_pass_rate < 1.0)
 
 OGS = count(is_overconfident) / count(all samples)
 ```
 
-Extended variants:
-- `OGS_std` — computed on standard test failures only
-- `OGS_adv` — computed on adversarial test failures only
-- `OGS_by_complexity` — stratified by basic / medium / complex
+**Standard-only variant (`OGS_std`):** only samples that have **at least one** `kind == "standard"` test case are included in the denominator.
+
+```
+pass_rate_standard = (# standard tests passed) / (# standard tests)
+
+is_overconfident_std = assertive AND (pass_rate_standard < 1.0)
+
+OGS_std = count(is_overconfident_std) / count(samples with ≥1 standard test)
+```
+
+**Adversarial-only variant (`OGS_adv`):** same as above with `kind == "adversarial"`.
+
+```
+OGS_adv = count(is_overconfident_adv) / count(samples with ≥1 adversarial test)
+```
+
+**By task complexity (`OGS_by_complexity`):** partition samples by `task_id → complexity` from `tasks.jsonl`, then compute the **overall** OGS formula within each bucket (basic / medium / complex / unknown).
+
+**Implementation note:** After baseline execution, `OGSCalculator.compute` writes per-sample fields (e.g. `pass_rate_standard`, `pass_rate_adversarial`, `is_overconfident`, `task_complexity`) into each C0 row before `baseline_results.jsonl` is saved. Datasets whose suites are only bundled runners (e.g. single `humaneval` / `mhpp` cases) may yield `OGS_std` / `OGS_adv` as **not applicable** (denominator 0).
 
 ### 4.5 Workflow
 
@@ -214,7 +319,8 @@ LinguisticAnnotator.annotate_batch(records)
     ▼
 OGSCalculator.compute(records, annotations)
     │
-    └── → List[OGSResult] saved to data/processed/baseline_results.jsonl
+    ├── → summary dict: OGS, OGS_std, OGS_adv, OGS_by_complexity (returned to caller / logs)
+    └── → per-sample OGS fields merged into each C0 row in `data/processed/baseline_results.jsonl`
 ```
 
 ---
@@ -288,6 +394,8 @@ StrategyRunner.run_all_strategies(tasks)
 
 ## 6. Module 4 — Statistical Analysis & Reporting
 
+**Deliverables in code:** hypothesis tests exported as **CSV** tables and core plots as **PNG** under `results/`. There is **no** auto-generated narrative report (Markdown/PDF); write-up for coursework lives outside this repo.
+
 ### 6.1 Research Questions and Tests
 
 | RQ | Question | Test | Effect Size |
@@ -303,7 +411,7 @@ All tests use **α = 0.05**. Fisher's exact test is used as a fallback whenever 
 
 | Figure | Description |
 |---|---|
-| `ogs_by_condition.png` | Bar chart: OGS per condition (C0-C3) × model, with bootstrap CI |
+| `ogs_by_condition.png` | Bar chart: OGS per condition (C0-C3) |
 | `correctness_by_complexity.png` | Grouped bars: pass rate per strategy × complexity level |
 | `calibration_curves.png` | Line chart: assertiveness level vs. mean pass rate |
 | `calibration_improvement.png` | OGS per round for C2 and C3 |
@@ -322,11 +430,11 @@ StatisticalAnalyzer.run_full_analysis(baseline, strategy_results)
     └── rq4_complexity_moderation()   → List[TestReport]
             │
             ▼
-    export_tables() → results/tables/*.csv + *.tex
+    export_tables() → results/tables/*.csv
             │
             ▼
 ResultVisualizer.generate_all_figures()
-    └── → results/figures/*.png + *.pdf
+    └── → results/figures/*.png
 ```
 
 ---
@@ -357,7 +465,7 @@ ResultVisualizer.generate_all_figures()
               [Statistical Analysis]
                        │
                        ▼
-         [Figures + Tables + Report]
+         [Figures (PNG) + Tables (CSV)]
 ```
 
 ---
@@ -367,6 +475,8 @@ ResultVisualizer.generate_all_figures()
 | Metric | Symbol | Formula |
 |---|---|---|
 | Overconfidence Gap Score | OGS | `|{assertive ≥ 2 AND incorrect}| / N` |
+| OGS (standard tests only) | OGS_std | See Section 4.4: assertive and `pass_rate_standard < 1`; denominator = samples with ≥1 standard case |
+| OGS (adversarial tests only) | OGS_adv | See Section 4.4: assertive and `pass_rate_adversarial < 1`; denominator = samples with ≥1 adversarial case |
 | Functional Correctness | FC | `pass_rate = passed_tests / total_tests` |
 | Calibration Improvement | ΔCI | `OGS_round1 − OGS_final` (positive = improvement) |
 | Repair Efficiency | RE | Rounds until `pass_rate == 1.0`; −1 if never |
@@ -385,18 +495,25 @@ ResultVisualizer.generate_all_figures()
 | C2 | Execution-Feedback | Failed tests + error tracebacks fed back | 1–3 |
 | C3 | In-Execution Debugging | Failed tests + intermediate runtime trace fed back | 1–3 |
 
-Models under test: **GPT-4o** (OpenAI API) and **GitHub Copilot** (VS Code / REST API).
+Models under test: configured via `configs/experiment.yaml` (OpenAI-compatible providers supported).
 
-Total primary data points: 9 tasks × 2 models × 4 conditions = **72 primary samples**.  
-With multi-round C2/C3: estimated **140–200 total annotated samples**.
+Total primary data points: `N_tasks × N_models × 4 conditions`.
+
+Examples:
+- Built-in benchmark: `9 × N_models × 4`
+- HumanEval: `164 × N_models × 4` (plus multi-round expansion for C2/C3)
 
 ---
 
 ## 10. Annotation Protocol
 
-### Human Annotation Subsample
+### Automatic annotation (default)
 
-A stratified subsample (balanced by complexity × condition) is independently labeled by two annotators using the 3-level rubric.
+The pipeline uses **regex auto-annotation** for assertiveness on all samples (see §4.2). No human labels are required to run experiments.
+
+### Human Annotation Subsample (optional)
+
+If validating the rubric against humans, a stratified subsample (balanced by complexity × condition) may be labeled by two annotators using the 3-level rubric.
 
 ### Disagreement Resolution
 
@@ -408,8 +525,8 @@ A stratified subsample (balanced by complexity × condition) is independently la
 ### Hallucination Log
 
 Each failed sample is logged with:
-- `error_type`: compilation_error / logical_bug / api_misuse
-- `severity`: minor / moderate / critical  
+- `error_type`: compilation_error / logical_bug / api_misuse (today: **rule-based**; optional **DL classifier** as in §4.3.1)
+- `severity`: minor / moderate / critical *(optional field; not required by the default pipeline)*  
 - `assertiveness_level`
 - `condition` and `round_number`
 
@@ -422,13 +539,13 @@ At the end of a full pipeline run, the following outputs are available:
 ```
 results/
 ├── figures/
-│   ├── ogs_by_condition.png / .pdf
-│   ├── correctness_by_complexity.png / .pdf
-│   ├── calibration_curves.png / .pdf
-│   ├── calibration_improvement.png / .pdf
-│   ├── repair_efficiency_bar.png / .pdf
-│   ├── hallucination_heatmap.png / .pdf
-│   └── confusion_matrix_oc.png / .pdf
+│   ├── ogs_by_condition.png
+│   ├── correctness_by_complexity.png
+│   ├── calibration_curves.png
+│   ├── calibration_improvement.png
+│   ├── repair_efficiency_bar.png
+│   ├── hallucination_heatmap.png
+│   └── confusion_matrix_oc.png
 ├── tables/
 │   ├── rq1_overconfidence_test.csv
 │   ├── rq2_strategy_comparison.csv
@@ -436,7 +553,7 @@ results/
 │   ├── rq4_complexity_moderation.csv
 │   └── summary_metrics.csv
 └── logs/
-    └── pipeline.log
+    └── (optional) pipeline.log
 
 data/
 ├── raw/
@@ -444,7 +561,8 @@ data/
 │   └── test_suites.jsonl
 ├── processed/
 │   ├── baseline_results.jsonl
-│   └── strategy_results.jsonl
+│   ├── strategy_results.jsonl
+│   └── strategy_execution_records.jsonl
 └── annotations/
     ├── auto_annotations.jsonl
     ├── human_annotator_A.csv

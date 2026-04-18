@@ -1,8 +1,12 @@
 # OverconfidenceLens — Environment Setup & Startup Guide
 
-> Tested on: Ubuntu 22.04 / macOS 14 (Apple Silicon & x86)  
+> Tested on: Ubuntu 22.04 / macOS 14 (Apple Silicon & x86) / Windows 10+  
 > Python: 3.11  
-> Package manager: Conda (Miniconda or Anaconda)
+> Package manager: Conda (Miniconda or Anaconda) recommended
+
+**Execution:** generated code runs in a **local subprocess** sandbox (`execution.sandbox: subprocess` in `configs/experiment.yaml`). **Docker is not required** for this repository’s default pipeline.
+
+**Outputs:** Phase 4 writes **PNG figures** and **CSV tables** under `results/` (see `WORKFLOW.md`). There is **no** built-in PDF/LaTeX export or auto-generated Markdown report.
 
 ---
 
@@ -12,11 +16,12 @@
 2. [Create the Conda Environment](#2-create-the-conda-environment)
 3. [Install Python Dependencies](#3-install-python-dependencies)
 4. [Configure API Keys](#4-configure-api-keys)
-5. [Set Up Docker Sandbox (Recommended)](#5-set-up-docker-sandbox-recommended)
+5. [Execution Sandbox (Subprocess)](#5-execution-sandbox-subprocess)
 6. [Verify the Installation](#6-verify-the-installation)
 7. [Running the Pipeline](#7-running-the-pipeline)
-8. [Common Errors & Fixes](#8-common-errors--fixes)
-9. [Environment Management](#9-environment-management)
+8. [Optional — Train the Error-Severity Model (PyTorch)](#8-optional--train-the-error-severity-model-pytorch)
+9. [Common Errors & Fixes](#9-common-errors--fixes)
+10. [Environment Management](#10-environment-management)
 
 ---
 
@@ -28,7 +33,6 @@ Before starting, ensure the following are installed on your system:
 |---|---|---|
 | Conda | 23.x | https://docs.conda.io/en/latest/miniconda.html |
 | Git | 2.x | https://git-scm.com |
-| Docker | 24.x *(optional but recommended)* | https://docs.docker.com/get-docker/ |
 
 Check your Conda version:
 
@@ -48,7 +52,7 @@ The repository includes a pre-configured environment file:
 ```bash
 # Clone the repository (if not already done)
 git clone <your-repo-url>
-cd overconfidence_lens
+cd overconfidence_llm
 
 # Create the environment from the YAML spec
 conda env create -f environment.yml
@@ -88,7 +92,7 @@ pip install -r requirements.txt
 ### Verify key packages
 
 ```bash
-python -c "import openai, scipy, matplotlib, docker; print('All packages OK')"
+python -c "import openai, scipy, matplotlib, torch, yaml; print('All packages OK')"
 ```
 
 Expected output:
@@ -97,11 +101,13 @@ Expected output:
 All packages OK
 ```
 
+`torch` is used by the optional **error severity** ByteCNN (`severity_dl` in `configs/experiment.yaml`). If you disable `severity_dl.enabled`, PyTorch is still listed in `requirements.txt` for a reproducible one-line install.
+
 ---
 
 ## 4. Configure API Keys
 
-The pipeline needs access to GPT-4o (OpenAI) and optionally GitHub Copilot.
+The pipeline calls an **OpenAI-compatible** HTTP API (OpenAI, GitHub Models, 讯飞星火, etc.) using the `openai` Python SDK. Configure the key and base URL to match your provider.
 
 ### Step 1 — Copy the environment template
 
@@ -111,14 +117,14 @@ cp .env.example .env
 
 ### Step 2 — Fill in your credentials
 
-Open `.env` in a text editor and set:
+Open `.env` in a text editor and set (examples):
 
 ```dotenv
-# Required: OpenAI API key for GPT-4o
+# API key for your provider (name may vary — see configs/experiment.yaml llm.base_url)
 OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-# Optional: GitHub token with Copilot scope (if testing Copilot)
-GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Optional: override API base URL
+# OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 > **Security note:** Never commit `.env` to version control. It is listed in `.gitignore` by default.
@@ -137,64 +143,51 @@ Key loaded: True
 
 ---
 
-## 5. Set Up Docker Sandbox (Recommended)
+## 5. Execution Sandbox (Subprocess)
 
-The execution sandbox runs generated code inside an isolated Docker container to prevent any harmful code from affecting your machine.
-
-### Pull the base image
-
-```bash
-docker pull python:3.11-slim
-```
-
-### Verify Docker is accessible
-
-```bash
-docker run --rm python:3.11-slim python -c "print('Docker sandbox OK')"
-```
-
-Expected output:
-
-```
-Docker sandbox OK
-```
-
-### Fallback: subprocess sandbox
-
-If Docker is not available (e.g., on an HPC cluster or CI environment), switch to the subprocess backend by editing `configs/experiment.yaml`:
+By default, `configs/experiment.yaml` uses:
 
 ```yaml
 execution:
-  sandbox: subprocess   # change from "docker" to "subprocess"
+  sandbox: subprocess
+  case_timeout_sec: 15
 ```
 
-> **Warning:** The subprocess backend does not provide network isolation. Do not use it with untrusted code outside of a controlled experiment.
+Model-generated Python is executed in a **short-lived local Python subprocess** per test case (see `src/module2_detection/execution_runner.py`). This matches the current codebase: **no Docker daemon is required**.
+
+> **Warning:** Subprocess execution does **not** provide strong isolation (e.g. no network namespace). Only run the pipeline on **trusted benchmarks** in a controlled experiment environment.
 
 ---
 
 ## 6. Verify the Installation
 
-Run the built-in check script to confirm everything is configured correctly:
+Quick checks (no separate script required):
 
 ```bash
-python scripts/check_env.py
+# Python version
+python --version
+
+# Config loads
+python -c "from src.utils.config import load_config; c=load_config('configs/experiment.yaml'); print('dataset:', c['tasks'].get('dataset'))"
+
+# Core imports
+python -c "import openai, scipy, matplotlib, torch; print('imports OK')"
 ```
 
-Expected output:
-
-```
-[OK] Python 3.11.x
-[OK] All required packages installed
-[OK] OPENAI_API_KEY found in environment
-[OK] Docker daemon reachable
-[OK] configs/experiment.yaml is valid
-[OK] data/ directories exist
-Environment check passed. Ready to run.
-```
+If these succeed, you are ready to run `main.py` (Section 7).
 
 ---
 
 ## 7. Running the Pipeline
+
+End-to-end behaviour is documented in **`WORKFLOW.md`** (modules, metrics, artifacts). Typical order:
+
+| Phase | Command | Role |
+|---:|---|---|
+| 1 | `python main.py --phase 1` | Tasks + test suites → `data/raw/` |
+| 2 | `python main.py --phase 2` | C0 baseline: LLM code, execution, **regex assertiveness**, **OGS fields**, optional **DL `severity`** on failed tests → `data/processed/baseline_results.jsonl` |
+| 3 | `python main.py --phase 3` | C1/C2/C3 strategies → `strategy_results.jsonl` + `strategy_execution_records.jsonl` |
+| 4 | `python main.py --phase 4` | Stats + **PNG** + **CSV** → `results/figures/`, `results/tables/` |
 
 ### Run the full pipeline (all 4 phases)
 
@@ -230,7 +223,7 @@ python main.py --phase all --config configs/experiment.yaml
 python main.py --phase all --log-level DEBUG
 ```
 
-### Run tests
+### Run tests (if `tests/` exists)
 
 ```bash
 pytest tests/ -v
@@ -241,15 +234,36 @@ pytest tests/ -v
 | Phase | Estimated Time |
 |---|---|
 | Phase 1 (task + test generation) | < 1 minute |
-| Phase 2 (C0 baseline, 2 models × 9 tasks) | 5–15 minutes |
-| Phase 3 (C1/C2/C3, multi-round) | 20–60 minutes |
-| Phase 4 (analysis + figures) | 1–3 minutes |
+| Phase 2 (C0 baseline; scales with `#tasks × #models`) | minutes–hours |
+| Phase 3 (C1/C2/C3, multi-round) | often longer than Phase 2 |
+| Phase 4 (analysis + figures) | ~1–5 minutes |
 
-Runtime varies by API latency and whether Docker is used.
+Runtime depends on API latency, task count (`tasks.dataset`, limits in YAML), and strategy `max_rounds`.
 
 ---
 
-## 8. Common Errors & Fixes
+## 8. Optional — Train the Error-Severity Model (PyTorch)
+
+When `severity_dl.enabled` is `true` in `configs/experiment.yaml`, Phase 2/3 attach a **`severity`** label (`minor` / `moderate` / `critical`) to each **failed** test case. If the checkpoint file is missing, the code **falls back to rule-based severity** and logs a warning.
+
+1. Run at least Phase 2 (and optionally Phase 3) once so `data/processed/` contains JSONL with failures.
+2. Train:
+
+```bash
+python scripts/train_severity_dl.py ^
+  --inputs data/processed/baseline_results.jsonl data/processed/strategy_execution_records.jsonl ^
+  --out models/severity_cnn.pt
+```
+
+(On macOS/Linux, use `\` line continuation instead of `^`.)
+
+3. Re-run Phase 2/3 so new rows include **model-predicted** `severity` (same field name; values come from the ByteCNN when the checkpoint loads).
+
+Training uses **pseudo-labels** from `rule_severity` inside `src/module2_detection/severity_dl.py` — no manual severity annotation is required for the first model.
+
+---
+
+## 9. Common Errors & Fixes
 
 ### `ModuleNotFoundError: No module named 'openai'`
 
@@ -262,33 +276,9 @@ pip install -r requirements.txt
 
 ---
 
-### `openai.AuthenticationError: No API key provided`
+### `openai.AuthenticationError` or provider 401
 
-The `.env` file is missing or the key is not loaded:
-
-```bash
-# Check the file exists and contains the key
-cat .env | grep OPENAI_API_KEY
-
-# Re-run after confirming
-python main.py --phase 2
-```
-
----
-
-### `docker.errors.DockerException: Error while fetching server API version`
-
-Docker daemon is not running. Start it:
-
-```bash
-# macOS
-open -a Docker
-
-# Linux (systemd)
-sudo systemctl start docker
-```
-
-Or switch to subprocess sandbox in `configs/experiment.yaml` (see Section 5).
+The `.env` file is missing, the key is wrong, or `llm.base_url` does not match your provider. Fix `.env` and `configs/experiment.yaml`, then re-run Phase 2.
 
 ---
 
@@ -313,13 +303,19 @@ conda install scipy -c conda-forge -y
 
 ---
 
-### `RateLimitError` from OpenAI
+### Rate limits / throttling from the API
 
-The API key has hit its rate limit. The `LLMClient` retries with exponential backoff (up to 3 attempts). If errors persist, add a delay between calls or use a different API key tier.
+The LLM client retries with backoff for some providers. If errors persist, reduce concurrency implicitly by fewer tasks, increase delays, or use a higher quota tier.
 
 ---
 
-## 9. Environment Management
+### Severity always looks rule-based
+
+Ensure `models/severity_cnn.pt` exists (Section 8), `severity_dl.enabled: true`, and `torch` imports successfully. Check logs for “Loaded severity DL model” vs “checkpoint missing”.
+
+---
+
+## 10. Environment Management
 
 ### List all conda environments
 

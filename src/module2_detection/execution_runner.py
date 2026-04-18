@@ -7,13 +7,17 @@ import logging
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
+import random
 from typing import Any
 
-from openai import OpenAI
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from src.module1_data.task_manager import Task
 from src.module1_data.test_suite import TestCase, TestSuite, TestSuiteBuilder
+from src.module2_detection.severity_dl import SeverityPredictor, annotate_test_results_list
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +26,13 @@ logger = logging.getLogger(__name__)
 class TestResult:
     test_id: str
     passed: bool
+    kind: str = "standard"  # standard | adversarial
+    expected_output: Any = None
     actual_output: Any = None
     error: str = ""
+    runtime_ms: float = 0.0
+    error_type: str = ""  # compilation_error | logical_bug | api_misuse | runtime_error | timeout
+    severity: str = ""  # minor | moderate | critical (DL or rule fallback)
 
 
 @dataclass
@@ -67,24 +76,44 @@ def _outputs_equal(actual: Any, expected: Any) -> bool:
         return False
 
 
-def _invoke_in_process(code: str, fn_name: str, inp: Any, timeout: int) -> tuple[bool, Any, str]:
-    """Run user code in a fresh subprocess (no Docker)."""
-    payload = json.dumps({"code": code, "fn": fn_name, "inp": inp})
+def _merge_humaneval_program(prompt: str, completion: str, entry_point: str) -> str:
+    """Combine HumanEval `prompt` + model `completion` like the official harness.
+
+    If the model returns a full `def entry_point(...):` block, replace the stub in
+    `prompt` from the last occurrence of that signature; otherwise append completion.
+    """
+    comp = completion.strip()
+    key = f"def {entry_point}"
+    if comp.startswith("def ") and key in comp[: len(key) + 20]:
+        i = prompt.rfind(key)
+        if i != -1:
+            return prompt[:i] + comp
+    return prompt + completion
+
+
+def _invoke_humaneval_in_process(
+    prompt: str, completion: str, test_src: str, entry_point: str, timeout: int
+) -> tuple[bool, Any, str, float]:
+    """Run official HumanEval-style tests: exec(prompt+completion) then exec(test)."""
+    program = _merge_humaneval_program(prompt, completion, entry_point)
+    payload = json.dumps({"program": program, "test": test_src})
     prog = r"""
-import json, sys, traceback
+import json, sys, traceback, time
 p = json.loads(sys.stdin.read())
-code, fn_name, inp = p["code"], p["fn"], p["inp"]
+program, test_src = p["program"], p["test"]
 try:
+    t0 = time.perf_counter()
     g = {}
-    exec(compile(code, "<llm>", "exec"), g, g)
-    fn = g[fn_name]
-    if isinstance(inp, dict):
-        out = fn(**inp)
-    else:
-        out = fn(inp)
-    json.dump({"ok": True, "out": out}, sys.stdout, default=str)
+    exec(compile(program, "<humaneval_prog>", "exec"), g, g)
+    exec(compile(test_src, "<humaneval_test>", "exec"), g, g)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": True, "runtime_ms": (t1 - t0) * 1000.0}, sys.stdout)
 except Exception:
-    json.dump({"ok": False, "err": traceback.format_exc()}, sys.stdout)
+    t1 = time.perf_counter()
+    json.dump(
+        {"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0},
+        sys.stdout,
+    )
 """
     try:
         proc = subprocess.run(
@@ -95,22 +124,352 @@ except Exception:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return False, None, "timeout"
+        return False, None, "timeout", float(timeout) * 1000.0
     raw = proc.stdout.decode("utf-8", errors="replace").strip()
     if not raw:
         err = proc.stderr.decode("utf-8", errors="replace")
-        return False, None, err or "empty stdout"
+        return False, None, err or "empty stdout", 0.0
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return False, None, raw[:2000]
+        return False, None, raw[:2000], 0.0
     if data.get("ok"):
-        return True, data.get("out"), ""
-    return False, None, str(data.get("err", ""))
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0)
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+    )
+
+
+def _invoke_mhpp_worker_payload(payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+    raw_in = json.dumps(payload, ensure_ascii=False)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "src.module2_detection.mhpp_exec_worker"],
+            input=raw_in.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            cwd=str(_REPO_ROOT),
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "err": "timeout", "runtime_ms": float(timeout) * 1000.0, "trace": []}
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        return {"ok": False, "err": err or "empty stdout", "runtime_ms": 0.0, "trace": []}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "err": raw[:2000], "runtime_ms": 0.0, "trace": []}
+
+
+def _invoke_mhpp_in_process(
+    prompt: str, completion: str, entry_point: str, timeout: int
+) -> tuple[bool, Any, str, float]:
+    program = _merge_humaneval_program(prompt, completion, entry_point)
+    data = _invoke_mhpp_worker_payload(
+        {"program": program, "entry_point": entry_point, "trace": False, "max_events": 0},
+        timeout,
+    )
+    if data.get("ok"):
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0)
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+    )
+
+
+def _invoke_in_process(
+    code: str, fn_name: str, inp: Any, timeout: int
+) -> tuple[bool, Any, str, float]:
+    """Run user code in a fresh subprocess (no Docker)."""
+    if isinstance(inp, dict) and inp.get("runner") == "mhpp":
+        return _invoke_mhpp_in_process(
+            str(inp.get("prompt", "")),
+            code,
+            str(inp.get("entry_point", fn_name)),
+            timeout,
+        )
+    if isinstance(inp, dict) and inp.get("runner") == "humaneval":
+        return _invoke_humaneval_in_process(
+            str(inp.get("prompt", "")),
+            code,
+            str(inp.get("test", "")),
+            str(inp.get("entry_point", fn_name)),
+            timeout,
+        )
+    payload = json.dumps({"code": code, "fn": fn_name, "inp": inp})
+    prog = r"""
+import json, sys, traceback, time
+p = json.loads(sys.stdin.read())
+code, fn_name, inp = p["code"], p["fn"], p["inp"]
+try:
+    t0 = time.perf_counter()
+    g = {}
+    exec(compile(code, "<llm>", "exec"), g, g)
+    fn = g[fn_name]
+    if isinstance(inp, dict):
+        out = fn(**inp)
+    else:
+        out = fn(inp)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": out, "runtime_ms": (t1 - t0) * 1000.0}, sys.stdout, default=str)
+except Exception:
+    t1 = time.perf_counter()
+    json.dump({"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0}, sys.stdout)
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", prog],
+            input=payload.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, None, "timeout", float(timeout) * 1000.0
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        return False, None, err or "empty stdout", 0.0
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, None, raw[:2000], 0.0
+    if data.get("ok"):
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0)
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+    )
+
+
+def _invoke_in_process_trace(
+    code: str, fn_name: str, inp: Any, timeout: int, max_events: int = 200
+) -> tuple[bool, Any, str, float, str]:
+    """Run user code and capture a lightweight line-by-line trace for the target function.
+
+    Trace is best-effort: it records at most `max_events` line events and a small
+    snapshot of locals (repr-truncated).
+    """
+    if isinstance(inp, dict) and inp.get("runner") == "mhpp":
+        prompt = str(inp.get("prompt", ""))
+        ep = str(inp.get("entry_point", fn_name))
+        program = _merge_humaneval_program(prompt, code, ep)
+        data = _invoke_mhpp_worker_payload(
+            {
+                "program": program,
+                "entry_point": ep,
+                "trace": True,
+                "max_events": int(max_events),
+            },
+            timeout,
+        )
+        trace = json.dumps(data.get("trace") or [], ensure_ascii=False)
+        if data.get("ok"):
+            return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0), trace
+        return (
+            False,
+            None,
+            str(data.get("err", "")),
+            float(data.get("runtime_ms", 0.0) or 0.0),
+            trace,
+        )
+
+    if isinstance(inp, dict) and inp.get("runner") == "humaneval":
+        prompt = str(inp.get("prompt", ""))
+        test_src = str(inp.get("test", ""))
+        ep = str(inp.get("entry_point", fn_name))
+        program = _merge_humaneval_program(prompt, code, ep)
+        payload = json.dumps(
+            {"program": program, "test": test_src, "entry_point": ep, "max_events": int(max_events)}
+        )
+        prog = r"""
+import json, sys, traceback, time
+p = json.loads(sys.stdin.read())
+program, test_src, entry_point = p["program"], p["test"], p["entry_point"]
+max_events = int(p.get("max_events", 200))
+events = []
+
+def _safe_repr(x, limit=200):
+    try:
+        s = repr(x)
+    except Exception:
+        s = "<unrepr>"
+    return s if len(s) <= limit else s[:limit] + "…"
+
+def tracer(frame, event, arg):
+    if frame.f_code.co_filename != "<humaneval_prog>":
+        return tracer
+    if frame.f_code.co_name != entry_point:
+        return tracer
+    if event == "line":
+        if len(events) < max_events:
+            loc = {k: _safe_repr(v) for k, v in frame.f_locals.items() if not k.startswith("__")}
+            events.append({"line": frame.f_lineno, "locals": loc})
+        return tracer
+    return tracer
+
+try:
+    t0 = time.perf_counter()
+    g = {}
+    exec(compile(program, "<humaneval_prog>", "exec"), g, g)
+    sys.settrace(tracer)
+    exec(compile(test_src, "<humaneval_test>", "exec"), g, g)
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": True, "runtime_ms": (t1 - t0) * 1000.0, "trace": events}, sys.stdout, default=str)
+except Exception:
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0, "trace": events}, sys.stdout, default=str)
+"""
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", prog],
+                input=payload.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False, None, "timeout", float(timeout) * 1000.0, "[]"
+        raw = proc.stdout.decode("utf-8", errors="replace").strip()
+        if not raw:
+            err = proc.stderr.decode("utf-8", errors="replace")
+            return False, None, err or "empty stdout", 0.0, "[]"
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return False, None, raw[:2000], 0.0, "[]"
+        trace = json.dumps(data.get("trace") or [], ensure_ascii=False)
+        if data.get("ok"):
+            return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0), trace
+        return (
+            False,
+            None,
+            str(data.get("err", "")),
+            float(data.get("runtime_ms", 0.0) or 0.0),
+            trace,
+        )
+
+    payload = json.dumps(
+        {"code": code, "fn": fn_name, "inp": inp, "max_events": int(max_events)}
+    )
+    prog = r"""
+import json, sys, traceback, time
+p = json.loads(sys.stdin.read())
+code, fn_name, inp = p["code"], p["fn"], p["inp"]
+max_events = int(p.get("max_events", 200))
+
+events = []
+def _safe_repr(x, limit=200):
+    try:
+        s = repr(x)
+    except Exception:
+        s = "<unrepr>"
+    return s if len(s) <= limit else s[:limit] + "…"
+
+def tracer(frame, event, arg):
+    if frame.f_code.co_filename != "<llm>":
+        return tracer
+    if frame.f_code.co_name != fn_name:
+        return tracer
+    if event == "line":
+        if len(events) < max_events:
+            loc = {k: _safe_repr(v) for k, v in frame.f_locals.items() if not k.startswith("__")}
+            events.append({"line": frame.f_lineno, "locals": loc})
+        return tracer
+    return tracer
+
+try:
+    t0 = time.perf_counter()
+    g = {}
+    exec(compile(code, "<llm>", "exec"), g, g)
+    fn = g[fn_name]
+    sys.settrace(tracer)
+    if isinstance(inp, dict):
+        out = fn(**inp)
+    else:
+        out = fn(inp)
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": True, "out": out, "runtime_ms": (t1 - t0) * 1000.0, "trace": events}, sys.stdout, default=str)
+except Exception:
+    sys.settrace(None)
+    t1 = time.perf_counter()
+    json.dump({"ok": False, "err": traceback.format_exc(), "runtime_ms": (t1 - t0) * 1000.0 if 't0' in globals() else 0.0, "trace": events}, sys.stdout, default=str)
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", prog],
+            input=payload.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, None, "timeout", float(timeout) * 1000.0, ""
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        return False, None, err or "empty stdout", 0.0, ""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, None, raw[:2000], 0.0, ""
+
+    trace = json.dumps(data.get("trace") or [], ensure_ascii=False)
+    if data.get("ok"):
+        return True, data.get("out"), "", float(data.get("runtime_ms", 0.0) or 0.0), trace
+    return (
+        False,
+        None,
+        str(data.get("err", "")),
+        float(data.get("runtime_ms", 0.0) or 0.0),
+        trace,
+    )
+
+
+def _classify_error(err: str) -> str:
+    if not err:
+        return ""
+    e = err.lower()
+    if "timeout" in e:
+        return "timeout"
+    if "syntaxerror" in e or "indentationerror" in e:
+        return "compilation_error"
+    if "nameerror" in e or "importerror" in e or "modulenotfounderror" in e:
+        return "api_misuse"
+    return "runtime_error"
 
 
 class _LLMClient:
     def __init__(self, config: dict):
+        try:
+            from openai import (  # type: ignore
+                AuthenticationError,
+                InternalServerError,
+                OpenAI,
+                RateLimitError,
+            )
+        except ModuleNotFoundError as e:  # pragma: no cover
+            raise ModuleNotFoundError(
+                "缺少依赖 `openai`，Phase 2/3 需要安装：\n"
+                "  pip install openai\n"
+                "Phase 1 不需要该依赖。"
+            ) from e
+
+        self._AuthenticationError = AuthenticationError
+        self._InternalServerError = InternalServerError
+        self._RateLimitError = RateLimitError
         llm = config.get("llm", {})
         api_key = llm.get("api_key")
         if not api_key:
@@ -121,23 +480,74 @@ class _LLMClient:
         kwargs: dict = {"api_key": api_key}
         if base:
             kwargs["base_url"] = str(base).rstrip("/")
+        # Add a conservative request timeout to avoid hanging forever.
+        # OpenAI SDK uses httpx under the hood; `timeout` is forwarded.
+        kwargs.setdefault("timeout", float(llm.get("request_timeout_sec", 60)))
         self._client = OpenAI(**kwargs)
         self._model = llm.get("default_model", "gpt-4o")
         self._temperature = float(llm.get("temperature", 0.2))
         self._max_tokens = int(llm.get("max_tokens", 4096))
+        self._max_retries = int(llm.get("max_retries", 8) or 8)
+        self._backoff_max_sec = float(llm.get("backoff_max_sec", 60) or 60)
 
     def complete(self, system: str, user: str, model: str | None = None) -> str:
         mid = model or self._model
-        resp = self._client.chat.completions.create(
-            model=mid,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
-        )
-        return (resp.choices[0].message.content or "").strip()
+        last_err: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                resp = self._client.chat.completions.create(
+                    model=mid,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
+                )
+                return (resp.choices[0].message.content or "").strip()
+            except Exception as e:  # noqa: BLE001
+                if isinstance(e, self._AuthenticationError):
+                    err_text = str(e).upper()
+                    if "HMAC" in err_text:
+                        raise ValueError(
+                            "讯飞返回 401（HMAC 不匹配）：OPENAI_API_KEY 必须是控制台里「HTTP 服务接口」的 "
+                            "**APIPassword**，不要把 WebSocket 的 APIKey 或 APISecret 单独当密码填。"
+                            "若你只有 APIKey + APISecret，请在 .env 设置 IFLYTEK_SPARK_API_KEY 与 "
+                            "IFLYTEK_SPARK_API_SECRET（会自动拼成 APIKey:APISecret），并按讯飞文档把 "
+                            "OPENAI_BASE_URL / configs 里的 base_url 改成支持该鉴权方式的地址（常为 v2 等）。"
+                        ) from e
+                    raise
+
+                if isinstance(e, self._InternalServerError):
+                    err_text = str(e)
+                    if "11200" in err_text or "AppIdNoAuthError" in err_text:
+                        raise ValueError(
+                            "讯飞返回 11200（AppIdNoAuthError）：多为「HTTP 接口的 APIPassword 所属版本」与 "
+                            "请求体里的 model 不一致，或该应用未开通对应模型。"
+                            "官方说明：不同版本（Lite / Pro / Max 等）对应不同 APIPassword，须在控制台对应版本页获取。"
+                            "若你用的是 Lite 页密钥，请把 configs/experiment.yaml 中 default_model 与 "
+                            "models.baseline[].model 改为 lite；若已开通 Max，请用 Max 页的 APIPassword 并保持 "
+                            "generalv3.5（见讯飞《星火认知大模型 http 接口文档》model 取值表）。"
+                        ) from e
+
+                # GitHub Models free tier is rate-limited; do exponential backoff with jitter.
+                if isinstance(e, self._RateLimitError) and attempt < self._max_retries:
+                    sleep_s = min(self._backoff_max_sec, (2**attempt) + random.random())
+                    logger.warning(
+                        "Rate limited by provider; backing off %.1fs (attempt %d/%d)",
+                        sleep_s,
+                        attempt + 1,
+                        self._max_retries,
+                    )
+                    time.sleep(sleep_s)
+                    last_err = e
+                    continue
+
+                last_err = e
+                break
+
+        assert last_err is not None
+        raise last_err
 
 
 class ExecutionRunner:
@@ -145,6 +555,7 @@ class ExecutionRunner:
         self.config = config
         self.timeout = int(config.get("execution", {}).get("case_timeout_sec", 15))
         self._llm = _LLMClient(config)
+        self._severity = SeverityPredictor(config)
 
     def run_baseline(self, tasks: list[Task]) -> list[dict[str, Any]]:
         builder = TestSuiteBuilder(self.config)
@@ -162,7 +573,7 @@ class ExecutionRunner:
                 fn = _func_name(task.function_signature)
                 results: list[TestResult] = []
                 for case in suite.cases:
-                    ok, out, err = _invoke_in_process(
+                    ok, out, err, runtime_ms = _invoke_in_process(
                         code, fn, case.input, self.timeout
                     )
                     passed = ok and _outputs_equal(out, case.expected_output)
@@ -170,10 +581,17 @@ class ExecutionRunner:
                         TestResult(
                             test_id=case.test_id,
                             passed=passed,
+                            kind=case.kind,
+                            expected_output=case.expected_output,
                             actual_output=out if ok else None,
                             error="" if passed else (err or f"got {out!r}"),
+                            runtime_ms=runtime_ms,
+                            error_type=(
+                                "" if passed else (_classify_error(err) if err else "logical_bug")
+                            ),
                         )
                     )
+                annotate_test_results_list(self.config, results, self._severity)
                 n = len(results)
                 passed_n = sum(1 for r in results if r.passed)
                 rate = passed_n / n if n else 0.0
