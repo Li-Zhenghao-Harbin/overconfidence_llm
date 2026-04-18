@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.module1_data.apps_dataset import normalize_apps_stdout
 from src.module1_data.task_manager import Task
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ class TestSuiteBuilder:
             meta = t.metadata or {}
             if meta.get("mhpp"):
                 cases = self._build_mhpp(t)
+            elif meta.get("apps"):
+                cases = self._build_apps(t)
             elif meta.get("humaneval") or meta.get("humaneval_test"):
                 cases = self._build_humaneval(t)
             else:
@@ -76,6 +79,28 @@ class TestSuiteBuilder:
             kind="mhpp",
         )
         return [tc]
+
+    def _build_apps(self, task: Task) -> list[TestCase]:
+        """APPS stdin/stdout pairs (normalized expected output for comparison)."""
+        meta = task.metadata or {}
+        tests = meta.get("apps_tests") or []
+        out: list[TestCase] = []
+        for i, t in enumerate(tests):
+            exp = normalize_apps_stdout(str(t.get("expected_stdout", "")))
+            out.append(
+                TestCase(
+                    test_id=f"{task.task_id}_apps{i}",
+                    task_id=task.task_id,
+                    input={
+                        "runner": "apps_stdio",
+                        "stdin": str(t.get("stdin", "")),
+                        "expected_stdout": exp,
+                    },
+                    expected_output=exp,
+                    kind="apps",
+                )
+            )
+        return out
 
     def _build_humaneval(self, task: Task) -> list[TestCase]:
         """One bundled HumanEval test (official `check(candidate)` script)."""

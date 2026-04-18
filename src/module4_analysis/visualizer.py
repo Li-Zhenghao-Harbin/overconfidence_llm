@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 class ResultVisualizer:
     def __init__(self, config: dict):
         self.config = config
+        self.overconf_threshold = int((config.get("annotation") or {}).get("overconfidence_threshold", 2))
 
     def generate_all_figures(self, stats: AnalysisReport) -> None:
         out = self.config.get("outputs") or {}
@@ -333,14 +334,14 @@ class ResultVisualizer:
         for r in baseline:
             sid = r.get("sample_id")
             assert_level = int(ann_map.get(sid, 0) or 0)
-            pred = assert_level >= 2
+            pred = assert_level >= self.overconf_threshold
             incorrect = float(r.get("overall_pass_rate", 0.0) or 0.0) < 1.0
             update(pred, incorrect)
 
         # Strategy rows (already include assertiveness_level)
         for r in strat_rows:
             assert_level = int(r.get("assertiveness_level", 0) or 0)
-            pred = assert_level >= 2
+            pred = assert_level >= self.overconf_threshold
             incorrect = float(r.get("overall_pass_rate", 0.0) or 0.0) < 1.0
             update(pred, incorrect)
 

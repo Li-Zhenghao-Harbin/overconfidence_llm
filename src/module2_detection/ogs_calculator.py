@@ -41,13 +41,14 @@ def _pass_rate_for_kinds(test_results: list[dict[str, Any]], kinds: set[str]) ->
     return (passed / n if n else None), passed, n
 
 
-def _is_assertive(level: int | None) -> bool:
-    return int(level or 0) >= 2
+def _is_assertive(level: int | None, threshold: int) -> bool:
+    return int(level or 0) >= int(threshold)
 
 
 class OGSCalculator:
     def __init__(self, config: dict):
         self.config = config
+        self.overconf_threshold = int((config.get("annotation") or {}).get("overconfidence_threshold", 2))
 
     def compute(
         self, results: list[dict[str, Any]], annotations: list[AnnotationRecord]
@@ -70,7 +71,7 @@ class OGSCalculator:
             sid = r.get("sample_id")
             a = by_id.get(sid) if sid else None
             level = a.assertiveness_level if a else None
-            assertive = _is_assertive(level)
+            assertive = _is_assertive(level, self.overconf_threshold)
 
             trs = r.get("test_results") or []
             if trs and not isinstance(trs[0], dict):

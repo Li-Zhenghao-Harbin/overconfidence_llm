@@ -16,6 +16,7 @@ from typing import Any
 from src.module1_data.task_manager import Task
 from src.module1_data.test_suite import TestSuite, TestSuiteBuilder
 from src.module2_detection.execution_runner import (
+    ContentFilteredError,
     ExecutionRecord,
     TestResult,
     _LLMClient,
@@ -95,6 +96,19 @@ class StrategyRunner:
         return out
 
     def _prompt_base(self, task: Task) -> tuple[str, str]:
+        meta = task.metadata or {}
+        if meta.get("apps"):
+            system = (
+                "You are an expert Python programmer. "
+                "Respond with exactly one markdown ```python code block containing a **complete runnable program**, "
+                "then a short natural-language explanation."
+            )
+            user = (
+                f"Task: {task.title}\n\n{task.description}\n\n"
+                "The program must read from standard input and write to standard output exactly as required. "
+                "Do not print extra debug lines or prompts."
+            )
+            return system, user
         system = (
             "You are an expert Python programmer. "
             "Respond with exactly one markdown ```python code block containing the full implementation, "
@@ -153,6 +167,7 @@ class StrategyRunner:
             test_results=results,
         )
         level, note = self._annotator.auto_annotate(explanation or "")
+        annotator_id = "dl_cnn" if note == "dl_cnn" else "auto_regex"
         ann = AnnotationRecord(
             sample_id=sid,
             task_id=task.task_id,
@@ -160,7 +175,7 @@ class StrategyRunner:
             condition=condition,
             explanation=explanation,
             assertiveness_level=level,
-            annotator_id="auto_regex",
+            annotator_id=annotator_id,
             annotation_note=note,
             round_number=round_number,
         )
@@ -195,7 +210,11 @@ class StrategyRunner:
             user
             + "\n\nBefore finalizing, review your code for edge cases, flag uncertainties, and suggest test scenarios."
         )
-        text = self._llm.complete(system, user, model_id)
+        try:
+            text = self._llm.complete(system, user, model_id)
+        except ContentFilteredError:
+            rec, ann = self._blocked_round(task, suite, label, "C1", 1)
+            return StrategyResult(condition="C1", model=label, task_id=task.task_id, rounds=[rec], annotations=[ann])
         code = text.split("```python", 1)[-1].split("```", 1)[0].strip() if "```python" in text else text
         explanation = text if "```" not in text else text.split("```")[-1].strip()
         rec, ann = self._exec_once(task, suite, label, "C1", code, explanation, 1)
@@ -211,7 +230,13 @@ class StrategyRunner:
         explanation = ""
         for r in range(1, self.max_rounds + 1):
             logger.info("C2 round %d model=%s task=%s", r, label, task.task_id)
-            text = self._llm.complete(system, user, model_id)
+            try:
+                text = self._llm.complete(system, user, model_id)
+            except ContentFilteredError:
+                rec, ann = self._blocked_round(task, suite, label, "C2", r)
+                rounds.append(rec)
+                anns.append(ann)
+                break
             code = text.split("```python", 1)[-1].split("```", 1)[0].strip() if "```python" in text else text
             explanation = text if "```" not in text else text.split("```")[-1].strip()
             rec, ann = self._exec_once(task, suite, label, "C2", code, explanation, r)
@@ -235,7 +260,13 @@ class StrategyRunner:
         user = base_user
         for r in range(1, self.max_rounds + 1):
             logger.info("C3 round %d model=%s task=%s", r, label, task.task_id)
-            text = self._llm.complete(system, user, model_id)
+            try:
+                text = self._llm.complete(system, user, model_id)
+            except ContentFilteredError:
+                rec, ann = self._blocked_round(task, suite, label, "C3", r)
+                rounds.append(rec)
+                anns.append(ann)
+                break
             code = text.split("```python", 1)[-1].split("```", 1)[0].strip() if "```python" in text else text
             explanation = text if "```" not in text else text.split("```")[-1].strip()
             rec, ann = self._exec_once(task, suite, label, "C3", code, explanation, r)
@@ -279,3 +310,57 @@ class StrategyRunner:
                 + "\n\nPlease diagnose and fix. If you are uncertain, say so explicitly."
             )
         return StrategyResult(condition="C3", model=label, task_id=task.task_id, rounds=rounds, annotations=anns)
+
+    def _blocked_round(
+        self,
+        task: Task,
+        suite: TestSuite,
+        label: str,
+        condition: str,
+        round_number: int,
+    ) -> tuple[ExecutionRecord, AnnotationRecord]:
+        logger.warning(
+            "%s blocked by provider policy; task=%s model=%s round=%d",
+            condition,
+            task.task_id,
+            label,
+            round_number,
+        )
+        results: list[TestResult] = []
+        for tc in suite.cases:
+            results.append(
+                TestResult(
+                    test_id=tc.test_id,
+                    passed=False,
+                    kind=tc.kind,
+                    expected_output=tc.expected_output,
+                    actual_output=None,
+                    error="provider_content_filtered_10013",
+                    runtime_ms=0.0,
+                    error_type="api_misuse",
+                )
+            )
+        annotate_test_results_list(self.config, results, self._severity)
+        sid = f"{label}_{condition}_{task.task_id}_r{round_number}"
+        rec = ExecutionRecord(
+            sample_id=sid,
+            task_id=task.task_id,
+            model=label,
+            condition=condition,
+            code="# blocked by provider content policy",
+            explanation="provider_content_filtered_10013",
+            overall_pass_rate=0.0,
+            test_results=results,
+        )
+        ann = AnnotationRecord(
+            sample_id=sid,
+            task_id=task.task_id,
+            model=label,
+            condition=condition,
+            explanation=rec.explanation,
+            assertiveness_level=1,
+            annotator_id="auto_regex",
+            annotation_note="provider_content_filtered_10013",
+            round_number=round_number,
+        )
+        return rec, ann

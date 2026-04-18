@@ -48,6 +48,7 @@ class StatisticalAnalyzer:
     def __init__(self, config: dict):
         self.config = config
         self.alpha = config["analysis"]["significance_level"]
+        self.overconf_threshold = int((config.get("annotation") or {}).get("overconfidence_threshold", 2))
 
     def run_full_analysis(
         self,
@@ -56,8 +57,8 @@ class StatisticalAnalyzer:
     ) -> AnalysisReport:
         # Load raw dataframes
         df_tasks = _load_tasks(self.config)
-        df_c0 = _baseline_to_df(baseline_results, df_tasks)
-        df_strat_final, df_strat_rounds = _strategy_to_df(df_tasks)
+        df_c0 = _baseline_to_df(baseline_results, df_tasks, self.overconf_threshold)
+        df_strat_final, df_strat_rounds = _strategy_to_df(df_tasks, self.overconf_threshold)
 
         # Combine final per-condition samples (C0 + C1/C2/C3 final)
         df_final = pd.concat([df_c0, df_strat_final], ignore_index=True)
@@ -108,7 +109,9 @@ def _load_baseline_annotations() -> pd.DataFrame:
     return df[["sample_id", "assertiveness_level"]]
 
 
-def _baseline_to_df(baseline_results: list[dict], df_tasks: pd.DataFrame) -> pd.DataFrame:
+def _baseline_to_df(
+    baseline_results: list[dict], df_tasks: pd.DataFrame, overconf_threshold: int
+) -> pd.DataFrame:
     df = pd.DataFrame(baseline_results or [])
     if df.empty:
         return pd.DataFrame(
@@ -127,7 +130,9 @@ def _baseline_to_df(baseline_results: list[dict], df_tasks: pd.DataFrame) -> pd.
     df = df.merge(df_tasks, on="task_id", how="left")
     df["condition"] = df.get("condition", "C0").fillna("C0")
     df["is_correct"] = (df["overall_pass_rate"].astype(float) == 1.0).astype(int)
-    df["is_assertive"] = (df["assertiveness_level"].fillna(0).astype(int) >= 2).astype(
+    df["is_assertive"] = (
+        df["assertiveness_level"].fillna(0).astype(int) >= int(overconf_threshold)
+    ).astype(
         int
     )
     df["is_overconfident"] = ((df["is_assertive"] == 1) & (df["is_correct"] == 0)).astype(
@@ -136,7 +141,9 @@ def _baseline_to_df(baseline_results: list[dict], df_tasks: pd.DataFrame) -> pd.
     return df
 
 
-def _strategy_to_df(df_tasks: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _strategy_to_df(
+    df_tasks: pd.DataFrame, overconf_threshold: int
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = _load_jsonl(pio.strategy_execution_records_path())
     df = pd.DataFrame(rows)
     if df.empty:
@@ -158,7 +165,9 @@ def _strategy_to_df(df_tasks: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
     df["overall_pass_rate"] = df["overall_pass_rate"].astype(float)
     df["round_number"] = df["round_number"].astype(int)
     df["is_correct"] = (df["overall_pass_rate"] == 1.0).astype(int)
-    df["is_assertive"] = (df["assertiveness_level"].fillna(0).astype(int) >= 2).astype(
+    df["is_assertive"] = (
+        df["assertiveness_level"].fillna(0).astype(int) >= int(overconf_threshold)
+    ).astype(
         int
     )
     df["is_overconfident"] = ((df["is_assertive"] == 1) & (df["is_correct"] == 0)).astype(

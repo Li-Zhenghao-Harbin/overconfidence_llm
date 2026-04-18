@@ -127,6 +127,14 @@ def ensure_dataset_tasks(config: dict, log: logging.Logger | None = None) -> Non
                 "Delete the file or switch tasks.dataset to mhpp.",
                 out_path,
             )
+        from src.module1_data.apps_dataset import tasks_file_looks_apps
+
+        if out_path.is_file() and tasks_file_looks_apps(out_path):
+            lg.warning(
+                "tasks.dataset is builtin but %s looks like APPS. "
+                "Delete the file or switch tasks.dataset to apps.",
+                out_path,
+            )
         return
 
     if dataset == "mhpp":
@@ -135,9 +143,15 @@ def ensure_dataset_tasks(config: dict, log: logging.Logger | None = None) -> Non
         ensure_mhpp_tasks(config, lg)
         return
 
+    if dataset == "apps":
+        from src.module1_data.apps_dataset import ensure_apps_tasks
+
+        ensure_apps_tasks(config, lg)
+        return
+
     if dataset != "humaneval":
         raise ValueError(
-            f"Unknown tasks.dataset: {dataset!r} (use 'builtin', 'humaneval', or 'mhpp')"
+            f"Unknown tasks.dataset: {dataset!r} (use 'builtin', 'humaneval', 'mhpp', or 'apps')"
         )
 
     he_cfg = tasks_cfg.get("humaneval") or {}

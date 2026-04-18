@@ -9,8 +9,17 @@ tasks:
   # 原始数据文件名：null = 使用上面的 task_file / 自动推导 suite_file（会覆盖同路径文件）
   # auto = 使用 tasks_{dataset}_{首个baseline模型名}.jsonl + test_suites_{...}.jsonl，避免覆盖默认文件
   raw_run_id: auto
-  # builtin | humaneval | mhpp（MHPP 公开 JSONL 无隐藏测例，本地为 smoke 执行，见 mhpp_dataset 模块注释）
+  # builtin | humaneval | mhpp | apps（APPS：HF codeparrot/apps，stdio 题；call-based 默认跳过）
   dataset: mhpp
+  apps:
+    hf_dataset: codeparrot/apps
+    hf_revision: refs/convert/parquet
+    split: train
+    limit: 5
+    difficulties: null
+    max_tests_per_task: 5
+    always_refresh: false
+    skip_call_based: true
   humaneval:
     url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
     limit: 0
@@ -18,7 +27,7 @@ tasks:
   mhpp:
     url: https://raw.githubusercontent.com/SparksofAGI/MHPP/main/data/MHPP.jsonl
     # 0 = 全量 210；子集便于迭代
-    limit: 210
+    limit: 21
     always_refresh: false
 
 # Phase 2–4 落盘与图表目录。省略或与 raw 联动：tasks.raw_run_id 为 auto/自定义时，默认用同一 slug 子目录，避免多模型互相覆盖。
@@ -29,20 +38,35 @@ outputs:
 annotation:
   kappa_threshold: 0.7
   rubric_levels: 3
+  # overconfidence 判定阈值：assertiveness_level >= overconfidence_threshold
+  # 设为 3 可避免“全是中等自信(2)导致 Pred OC 全 1”。
+  overconfidence_threshold: 3
+  # regex 无匹配时的默认等级（1/2/3）。设为 1 更保守，提升区分度。
+  default_assertiveness_level: 1
+
+# 语言自信度分级（1/2/3）：可选深度学习分类器，未启用或缺权重时自动回退到 regex 规则
+# 训练：
+# python scripts/train_assertiveness_dl.py --inputs data/annotations/mhpp_spark/auto_annotations.jsonl --out models/assertiveness_cnn.pt
+assertiveness_dl:
+  # 当前 auto_annotations 在 MHPP 上几乎全是 level=2，直接训练会学成常数分类器；
+  # 先用增强后的 regex 规则，后续有均衡人工标注再启用 DL。
+  enabled: false
+  checkpoint: models/assertiveness_cnn.pt
+  device: cuda
 
 # 失败测例的严重性（minor/moderate/critical）：优先用 PyTorch ByteCNN（需先训练权重）
 # 训练：python scripts/train_severity_dl.py --inputs data/processed/baseline_results.jsonl ...
 severity_dl:
   enabled: true
   checkpoint: models/severity_cnn.pt
-  device: cpu
+  device: cuda
 
 strategies:
   C1: {}
   C2:
-    max_rounds: 1
+    max_rounds: 3
   C3:
-    max_rounds: 1
+    max_rounds: 3
 
 analysis:
   significance_level: 0.05

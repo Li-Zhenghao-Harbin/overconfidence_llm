@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 import random
 from typing import Any
+
+from src.module1_data.apps_dataset import normalize_apps_stdout
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,6 +24,10 @@ from src.module1_data.test_suite import TestCase, TestSuite, TestSuiteBuilder
 from src.module2_detection.severity_dl import SeverityPredictor, annotate_test_results_list
 
 logger = logging.getLogger(__name__)
+
+
+class ContentFilteredError(RuntimeError):
+    """Provider refused the prompt due to content policy filtering."""
 
 
 @dataclass
@@ -166,6 +174,52 @@ def _invoke_mhpp_worker_payload(payload: dict[str, Any], timeout: int) -> dict[s
         return {"ok": False, "err": raw[:2000], "runtime_ms": 0.0, "trace": []}
 
 
+def _invoke_apps_stdio(
+    code: str, stdin_text: str, expected_stdout: str, timeout: int
+) -> tuple[bool, str, str, float]:
+    """Run APPS-style full program: stdin → stdout, compare normalized stdout."""
+    exp_norm = normalize_apps_stdout(expected_stdout)
+    t0 = time.perf_counter()
+    path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(code)
+            path = f.name
+        proc = subprocess.run(
+            [sys.executable, path],
+            input=stdin_text.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        t1 = time.perf_counter()
+        ms = (t1 - t0) * 1000.0
+        out_b = proc.stdout.decode("utf-8", errors="replace")
+        err_b = proc.stderr.decode("utf-8", errors="replace")
+        actual = normalize_apps_stdout(out_b)
+        if proc.returncode != 0:
+            return False, actual, err_b or f"non-zero exit {proc.returncode}", ms
+        ok = actual == exp_norm
+        return (
+            ok,
+            actual,
+            "" if ok else f"stdout mismatch (stderr={err_b[:400]!r})",
+            ms,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "", "timeout", float(timeout) * 1000.0
+    except Exception as e:  # noqa: BLE001
+        return False, "", str(e), 0.0
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 def _invoke_mhpp_in_process(
     prompt: str, completion: str, entry_point: str, timeout: int
 ) -> tuple[bool, Any, str, float]:
@@ -188,6 +242,14 @@ def _invoke_in_process(
     code: str, fn_name: str, inp: Any, timeout: int
 ) -> tuple[bool, Any, str, float]:
     """Run user code in a fresh subprocess (no Docker)."""
+    if isinstance(inp, dict) and inp.get("runner") == "apps_stdio":
+        ok, actual, err, ms = _invoke_apps_stdio(
+            code,
+            str(inp.get("stdin", "")),
+            str(inp.get("expected_stdout", "")),
+            timeout,
+        )
+        return ok, actual, err, ms
     if isinstance(inp, dict) and inp.get("runner") == "mhpp":
         return _invoke_mhpp_in_process(
             str(inp.get("prompt", "")),
@@ -259,6 +321,18 @@ def _invoke_in_process_trace(
     Trace is best-effort: it records at most `max_events` line events and a small
     snapshot of locals (repr-truncated).
     """
+    if isinstance(inp, dict) and inp.get("runner") == "apps_stdio":
+        ok, actual, err, ms = _invoke_apps_stdio(
+            code,
+            str(inp.get("stdin", "")),
+            str(inp.get("expected_stdout", "")),
+            timeout,
+        )
+        trace = json.dumps([], ensure_ascii=False)
+        if ok:
+            return True, actual, "", ms, trace
+        return False, actual, err, ms, trace
+
     if isinstance(inp, dict) and inp.get("runner") == "mhpp":
         prompt = str(inp.get("prompt", ""))
         ep = str(inp.get("entry_point", fn_name))
@@ -520,6 +594,14 @@ class _LLMClient:
 
                 if isinstance(e, self._InternalServerError):
                     err_text = str(e)
+                    if (
+                        "10013" in err_text
+                        or "相关法律法" in err_text
+                        or "无法提供关于以下内容" in err_text
+                    ):
+                        raise ContentFilteredError(
+                            "Provider content policy blocked this task prompt (code=10013)."
+                        ) from e
                     if "11200" in err_text or "AppIdNoAuthError" in err_text:
                         raise ValueError(
                             "讯飞返回 11200（AppIdNoAuthError）：多为「HTTP 接口的 APIPassword 所属版本」与 "
@@ -569,7 +651,44 @@ class ExecutionRunner:
             label = mc.get("name", model_id)
             for task in tasks:
                 suite = suites[task.task_id]
-                code, explanation = self._query_model(task, model_id)
+                try:
+                    code, explanation = self._query_model(task, model_id)
+                except ContentFilteredError as e:
+                    logger.warning(
+                        "Baseline %s %s blocked by provider policy; marking as failed and continuing. %s",
+                        label,
+                        task.task_id,
+                        e,
+                    )
+                    blocked_results: list[TestResult] = []
+                    for case in suite.cases:
+                        blocked_results.append(
+                            TestResult(
+                                test_id=case.test_id,
+                                passed=False,
+                                kind=case.kind,
+                                expected_output=case.expected_output,
+                                actual_output=None,
+                                error="provider_content_filtered_10013",
+                                runtime_ms=0.0,
+                                error_type="api_misuse",
+                            )
+                        )
+                    annotate_test_results_list(self.config, blocked_results, self._severity)
+                    sid = f"{label}_{task.task_id}"
+                    rows.append(
+                        {
+                            "sample_id": sid,
+                            "task_id": task.task_id,
+                            "model": label,
+                            "condition": "C0",
+                            "code": "# blocked by provider content policy",
+                            "explanation": "provider_content_filtered_10013",
+                            "overall_pass_rate": 0.0,
+                            "test_results": blocked_results,
+                        }
+                    )
+                    continue
                 fn = _func_name(task.function_signature)
                 results: list[TestResult] = []
                 for case in suite.cases:
@@ -614,16 +733,29 @@ class ExecutionRunner:
         return rows
 
     def _query_model(self, task: Task, model_id: str) -> tuple[str, str]:
-        system = (
-            "You are an expert Python programmer. "
-            "Respond with exactly one markdown ```python code block containing the full implementation, "
-            "then a short natural-language explanation of your solution."
-        )
-        user = (
-            f"Task: {task.title}\n\n{task.description}\n\n"
-            f"Required signature (must match exactly):\n{task.function_signature}\n\n"
-            "Implement only the function (or class) above. No main guard, no tests."
-        )
+        meta = task.metadata or {}
+        if meta.get("apps"):
+            system = (
+                "You are an expert Python programmer. "
+                "Respond with exactly one markdown ```python code block containing a **complete runnable program**, "
+                "then a short natural-language explanation of your solution."
+            )
+            user = (
+                f"Task: {task.title}\n\n{task.description}\n\n"
+                "The program must read from standard input and write to standard output exactly as required. "
+                "Do not print extra debug lines or prompts."
+            )
+        else:
+            system = (
+                "You are an expert Python programmer. "
+                "Respond with exactly one markdown ```python code block containing the full implementation, "
+                "then a short natural-language explanation of your solution."
+            )
+            user = (
+                f"Task: {task.title}\n\n{task.description}\n\n"
+                f"Required signature (must match exactly):\n{task.function_signature}\n\n"
+                "Implement only the function (or class) above. No main guard, no tests."
+            )
         # model_id passed for logging; client uses config llm.default_model (讯飞在 YAML / env 配置)
         text = self._llm.complete(system, user, model_id)
         code = _extract_code(text)

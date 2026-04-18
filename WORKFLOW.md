@@ -62,8 +62,8 @@ OGS = |{ samples : assertiveness ≥ 2  AND  code is incorrect }| / |total sampl
 
 | Path | Contents |
 |---|---|
-| `data/raw/tasks*.jsonl` | Task benchmark used in this run (either the built-in 9 tasks or an imported dataset such as HumanEval). Exact filename comes from `tasks.task_file` / `tasks.raw_run_id` (see §3.5). |
-| `data/raw/test_suites*.jsonl` | Standard + adversarial (or HumanEval bundled) test cases per task. Exact filename from `tasks.suite_file` (auto-derived when using `raw_run_id`). |
+| `data/raw/tasks*.jsonl` | Task benchmark used in this run (built-in 9 tasks, HumanEval, MHPP, or APPS). Exact filename comes from `tasks.task_file` / `tasks.raw_run_id` (see §3.5–3.9). |
+| `data/raw/test_suites*.jsonl` | Per-task tests: built-in standard+adversarial; HumanEval bundled script; MHPP single smoke case; APPS multiple stdin/stdout cases. Filename from `tasks.suite_file` (auto-derived when using `raw_run_id`). |
 | `data/processed/…/baseline_results.jsonl` | C0 execution records (default: `data/processed/`; with run slug: `data/processed/{slug}/`, see §3.6) |
 | `data/processed/…/strategy_results.jsonl` | C1/C2/C3 strategy results (one row per task×condition; includes all rounds) |
 | `data/processed/…/strategy_execution_records.jsonl` | C1/C2/C3 execution records (one row per round; convenient for RQ3 + plotting) |
@@ -82,7 +82,9 @@ Define (or import) the programming tasks and build the test suites used across a
 
 Supported benchmark modes:
 - **Built-in mini benchmark**: 9 tasks (3 per complexity level) for fast iteration.
-- **HumanEval (recommended for final reporting)**: import tasks to increase sample size and external validity.
+- **HumanEval**: import tasks to increase sample size; uses the official bundled `check(candidate)` tests per task (see §3.5).
+- **MHPP**: imports prompts from the public `MHPP.jsonl`; local execution is **smoke-only** (see §12) — not equivalent to the official MHPP server benchmark.
+- **APPS**: imports tasks from Hugging Face `codeparrot/apps` with **real stdin/stdout test pairs** from the dataset for each task (see §12) — stronger than MHPP smoke for stdio problems, but **not** full APPS coverage (call-based tasks skipped by default).
 
 ### 3.2 Task Taxonomy
 
@@ -203,6 +205,113 @@ Execution note: the runner merges `prompt + model_completion` similarly to the o
 
 **切回 builtin 时**：把 `dataset` 改回 `builtin`；若 `task_file` 仍是 HumanEval 内容，请删除该文件或改 `task_file` 路径，否则 `main.py` 会给出警告。
 
+### 3.7 MHPP — concrete import (implemented in repo)
+
+The public MHPP JSONL contains **prompts only**; hidden tests are evaluated on the authors’ server. This repository therefore builds **one smoke test case per task** (`runner: mhpp`): merge `prompt + completion` like a HumanEval-style harness and run a single callable probe. That signal measures whether something executes — **it is not the official MHPP accuracy** and should be labeled **“MHPP (local smoke)”** in reports.
+
+```yaml
+tasks:
+  dataset: mhpp
+  raw_run_id: auto   # recommended: avoids overwriting other datasets’ task files
+  mhpp:
+    url: https://raw.githubusercontent.com/SparksofAGI/MHPP/main/data/MHPP.jsonl
+    limit: 0         # >0 = first N tasks only (quick smoke)
+    always_refresh: false
+```
+
+### 3.8 APPS — concrete import (implemented in repo)
+
+APPS tasks are loaded with Hugging Face **`datasets`**. Because `datasets` ≥ 4.x no longer runs legacy Hub **Python dataset scripts**, loading uses the Parquet export revision **`refs/convert/parquet`** by default (`tasks.apps.hf_revision`).
+
+**What gets evaluated (stdio integration):**
+
+- For each task, the pipeline reads public **`input_output`** pairs from the dataset. If `fn_name` is present (call-based / function-submit problems), the row is **skipped** when `skip_call_based: true` (default).
+- For remaining rows, up to **`max_tests_per_task`** stdin/stdout pairs are kept per task. Each test runs the model’s **full program** in a subprocess: stdin is piped in, stdout is normalized (line endings + trailing whitespace) and compared to the expected string.
+- The LLM prompt for APPS asks for a **complete runnable program** (not “function only”), consistent with stdio execution.
+
+**Report wording:** describe this as **“APPS (HF stdio subset, local execution)”** — real tests from the dataset for stdio problems, **not** the entire APPS benchmark (call-based portion excluded unless you extend the code).
+
+**Dependencies:**
+
+```bash
+pip install -r requirements.txt   # includes `datasets`
+# optional: HF_TOKEN for higher Hub rate limits
+```
+
+**Configuration example:**
+
+```yaml
+tasks:
+  dataset: apps
+  raw_run_id: auto
+  apps:
+    hf_dataset: codeparrot/apps
+    hf_revision: refs/convert/parquet
+    split: train
+    limit: 0                    # 0 = all loaded rows after filtering; >0 = first N rows (smoke / subsample)
+    difficulties: null        # or e.g. [introductory, interview] — filters HF rows
+    max_tests_per_task: 5      # cap public tests per task (reduces API + runtime cost)
+    always_refresh: false
+    skip_call_based: true      # false = attempt call-based (not fully supported end-to-end)
+```
+
+**Commands (full pipeline for reports):**
+
+```bash
+python main.py --phase 1 --config configs/experiment.yaml   # tasks + test_suites JSONL
+python main.py --phase 2 --config configs/experiment.yaml   # C0 baseline
+python main.py --phase 3 --config configs/experiment.yaml   # C1–C3
+python main.py --phase 4 --config configs/experiment.yaml   # tables + figures
+# or:
+python main.py --phase all --config configs/experiment.yaml
+```
+
+**When DL blocks are enabled in YAML (`assertiveness_dl.enabled` / `severity_dl.enabled`):**
+
+```bash
+# 0) optional GPU check
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+
+# 1) train assertiveness model (Channel A)
+python scripts/train_assertiveness_dl.py \
+  --inputs data/annotations/<run_slug>/auto_annotations.jsonl \
+  --out models/assertiveness_cnn.pt \
+  --device cuda
+
+# 2) train severity model (Channel B)
+python scripts/train_severity_dl.py \
+  --inputs data/processed/<run_slug>/baseline_results.jsonl data/processed/<run_slug>/strategy_execution_records.jsonl \
+  --out models/severity_cnn.pt \
+  --device cuda
+
+# 3) run full pipeline (Phase 2/3 will try loading DL checkpoints)
+python main.py --phase all --config configs/experiment.yaml
+```
+
+> Note: `--phase all` includes DL inference paths, but true DL inference happens only when the corresponding checkpoint file exists; otherwise each module falls back to rules.
+
+**Artifacts:** with `raw_run_id: auto`, raw files are versioned as `data/raw/tasks_{dataset}_{baseline_slug}.jsonl` and paired `test_suites_*.jsonl`; Phase 2–4 outputs follow the same slug under `data/processed/`, `results/`, etc. (see §3.6).
+
+**Switching datasets:** change `tasks.dataset` and ensure the target `task_file` either does not exist or `always_refresh: true`, or use `raw_run_id: auto` so each dataset/model combo writes to distinct files.
+
+### 3.9 MHPP vs APPS — Evaluation mode (for reporting)
+
+Use this subsection in coursework / lab reports to justify **what exactly** was measured.
+
+| Mode | MHPP (this repo) | APPS (this repo) |
+|------|------------------|------------------|
+| **Test source** | No bundled hidden tests in public JSONL → pipeline synthesizes **one** smoke invocation per task. | Multiple tests per task from dataset **`input_output`** (stdin/stdout strings), up to `max_tests_per_task`. |
+| **Execution** | Merge prompt + completion; run merged program with MHPP-style worker (`runner: mhpp`). | Write model code to a temp `.py` file; `subprocess` with piped stdin; compare normalized stdout (`runner: apps_stdio`). |
+| **Fidelity** | **Smoke / proxy only** — comparable to “does it run once”, **not** official MHPP leaderboard accuracy. | **Substantive** for stdio tasks: each listed test is a real I/O check. Still **incomplete** vs full APPS: **call-based** problems are skipped by default; competitive interview split may need separate reporting. |
+| **OGS split metrics** | `OGS_std` / `OGS_adv` typically **n/a** (suite is not standard+adversarial buckets). | Same as MHPP for bucketed OGS — APPS tests use `kind: apps`, not `standard`/`adversarial`. Headline OGS still applies. |
+
+**HumanEval (contrast):** one bundled official test script per task (`runner: humaneval`) — closest to “standard local benchmark” among the three imports.
+
+> **中文要点（写进报告/答辩可直接用）：**  
+> **MHPP**：公开数据只有题面，本仓库用 **单次 smoke 执行** 作代理，**不能**声称复现官方 MHPP 榜单结果，应写作「本地 smoke 探测」。  
+> **APPS**：对 **stdin/stdout 类**题目使用数据集中的 **真实多组测例** 本地执行比对，比 MHPP smoke **更能反映解题对错**；但默认 **跳过 call-based 题**，且每题测例数受 `max_tests_per_task` 限制，须在方法节 **明确写出评估子集**。  
+> **完整流程**：安装依赖（含 `datasets`）→ 配置 `dataset: apps` 与 `tasks.apps` → `python main.py --phase all` → 根据 `raw_run_id` 下的 `data/processed/` 与 `results/` 整理图表与表格。
+
 ---
 
 ## 4. Module 2 — Dual-Channel Overconfidence Detection
@@ -224,8 +333,18 @@ Each LLM response contains a natural-language explanation. This explanation is c
 **Annotation protocol (current scope):**
 - **Automatic annotation only** (no human annotators required for the default pipeline).
 - **Who labels:** the pipeline’s `LinguisticAnnotator` (software component in the repo), not a person.
-- **How:** rule-based **regex** matching over the model’s natural-language explanation: tentative phrases → level 1; strongly assertive phrases → level 3; moderately assertive → level 2; if nothing matches, default **level 2** (moderate). Matched patterns are recorded in `annotation_note` for auditability.
+- **How (default):** rule-based **regex** matching over the model’s natural-language explanation: tentative phrases → level 1; strongly assertive phrases → level 3; moderately assertive → level 2; if nothing matches, default **level 2** (moderate). Matched patterns are recorded in `annotation_note` for auditability.
+- **How (optional DL mode):** if `assertiveness_dl.enabled: true` and the checkpoint exists, `LinguisticAnnotator` uses `AssertivenessPredictor` (`src/module2_detection/assertiveness_dl.py`) to predict level 1/2/3 from explanation text; if load/inference fails, it **falls back to regex** automatically.
 - **Optional extension (not required to run phases 1–4):** a stratified human subsample with two annotators and **Cohen's κ** (target κ ≥ 0.7) for rubric validation, as in §10.
+
+#### Assertiveness classification — regex baseline + optional deep learning
+
+- **Task:** classify explanation text into assertiveness level **1 / 2 / 3**.
+- **Model (optional):** token-level **1-D CNN** classifier, implemented in `src/module2_detection/assertiveness_dl.py`.
+- **Configuration:** YAML block `assertiveness_dl` (`enabled`, `checkpoint`, `device`, optional `max_len` / `emb_dim` / `conv_dim`).
+- **Training:** `python scripts/train_assertiveness_dl.py --inputs <annotation_jsonl...> --out models/assertiveness_cnn.pt [--device cuda]`.
+- **Training data:** annotation rows containing `explanation` + `assertiveness_level` (bootstrapped from `auto_annotations.jsonl` and/or replaced by human labels).
+- **Runtime safety:** if torch/checkpoint is unavailable, the pipeline keeps running with regex labels.
 
 ### 4.3 Channel B — Execution Correctness
 
@@ -569,3 +688,30 @@ data/
     ├── human_annotator_B.csv
     └── merged_annotations.jsonl
 ```
+
+---
+
+## 12. Deep-Learning Models in This Repo (FAQ)
+
+### 12.1 What each model is used for
+
+- **Assertiveness model (`models/assertiveness_cnn.pt`)**  
+  Input: natural-language explanation text.  
+  Output: assertiveness level **1 / 2 / 3** for OGS (`assertiveness_level >= 2` counts as assertive).
+
+- **Severity model (`models/severity_cnn.pt`)**  
+  Input: failed-case text `error_type + "\n" + error traceback`.  
+  Output: failure severity **minor / moderate / critical** per failed test case.
+
+### 12.2 What data they are trained on
+
+- **Assertiveness model:** trained from annotation JSONL rows with `explanation` + `assertiveness_level` (auto labels and/or human labels). Script: `scripts/train_assertiveness_dl.py`.
+- **Severity model:** trained from execution JSONL rows (`baseline_results.jsonl`, `strategy_execution_records.jsonl`) using pseudo-label teacher `rule_severity`. Script: `scripts/train_severity_dl.py`.
+
+### 12.3 Can we train on MHPP and apply to APPS?
+
+Yes. Both are regular PyTorch checkpoints and can be reused across datasets:
+
+- You can train on **MHPP** outputs first, then run inference in **APPS** experiments.
+- In reporting, clearly state this as cross-dataset transfer (e.g., “trained on MHPP, inferred on APPS”).
+- For stronger rigor, compare in-domain vs cross-domain performance when possible.
