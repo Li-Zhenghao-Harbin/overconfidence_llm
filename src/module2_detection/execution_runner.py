@@ -26,6 +26,10 @@ from src.module2_detection.severity_dl import SeverityPredictor, annotate_test_r
 logger = logging.getLogger(__name__)
 
 
+class ContentFilteredError(RuntimeError):
+    """Provider refused the prompt due to content policy filtering."""
+
+
 @dataclass
 class TestResult:
     test_id: str
@@ -590,6 +594,14 @@ class _LLMClient:
 
                 if isinstance(e, self._InternalServerError):
                     err_text = str(e)
+                    if (
+                        "10013" in err_text
+                        or "相关法律法" in err_text
+                        or "无法提供关于以下内容" in err_text
+                    ):
+                        raise ContentFilteredError(
+                            "Provider content policy blocked this task prompt (code=10013)."
+                        ) from e
                     if "11200" in err_text or "AppIdNoAuthError" in err_text:
                         raise ValueError(
                             "讯飞返回 11200（AppIdNoAuthError）：多为「HTTP 接口的 APIPassword 所属版本」与 "
@@ -639,7 +651,44 @@ class ExecutionRunner:
             label = mc.get("name", model_id)
             for task in tasks:
                 suite = suites[task.task_id]
-                code, explanation = self._query_model(task, model_id)
+                try:
+                    code, explanation = self._query_model(task, model_id)
+                except ContentFilteredError as e:
+                    logger.warning(
+                        "Baseline %s %s blocked by provider policy; marking as failed and continuing. %s",
+                        label,
+                        task.task_id,
+                        e,
+                    )
+                    blocked_results: list[TestResult] = []
+                    for case in suite.cases:
+                        blocked_results.append(
+                            TestResult(
+                                test_id=case.test_id,
+                                passed=False,
+                                kind=case.kind,
+                                expected_output=case.expected_output,
+                                actual_output=None,
+                                error="provider_content_filtered_10013",
+                                runtime_ms=0.0,
+                                error_type="api_misuse",
+                            )
+                        )
+                    annotate_test_results_list(self.config, blocked_results, self._severity)
+                    sid = f"{label}_{task.task_id}"
+                    rows.append(
+                        {
+                            "sample_id": sid,
+                            "task_id": task.task_id,
+                            "model": label,
+                            "condition": "C0",
+                            "code": "# blocked by provider content policy",
+                            "explanation": "provider_content_filtered_10013",
+                            "overall_pass_rate": 0.0,
+                            "test_results": blocked_results,
+                        }
+                    )
+                    continue
                 fn = _func_name(task.function_signature)
                 results: list[TestResult] = []
                 for case in suite.cases:

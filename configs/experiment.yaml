@@ -27,8 +27,8 @@ tasks:
   mhpp:
     url: https://raw.githubusercontent.com/SparksofAGI/MHPP/main/data/MHPP.jsonl
     # 0 = 全量 210；子集便于迭代
-    limit: 20
-    always_refresh: true
+    limit: 21
+    always_refresh: false
 
 # Phase 2–4 落盘与图表目录。省略或与 raw 联动：tasks.raw_run_id 为 auto/自定义时，默认用同一 slug 子目录，避免多模型互相覆盖。
 # run_id: flat = 强制写回 data/processed 与 results 根目录；run_id: auto = 仅用 dataset+模型名子目录（raw 仍可为默认 tasks.jsonl）。
