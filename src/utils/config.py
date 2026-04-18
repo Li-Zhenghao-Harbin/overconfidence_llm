@@ -42,6 +42,16 @@ _DEFAULTS: dict[str, Any] = {
             "limit": 0,
             "always_refresh": False,
         },
+        "apps": {
+            "hf_dataset": "codeparrot/apps",
+            "hf_revision": "refs/convert/parquet",
+            "split": "train",
+            "limit": 0,
+            "difficulties": None,
+            "max_tests_per_task": 5,
+            "always_refresh": False,
+            "skip_call_based": True,
+        },
     },
     "annotation": {"kappa_threshold": 0.7, "rubric_levels": 3},
     "severity_dl": {

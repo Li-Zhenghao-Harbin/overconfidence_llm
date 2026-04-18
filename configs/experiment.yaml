@@ -9,8 +9,17 @@ tasks:
   # 原始数据文件名：null = 使用上面的 task_file / 自动推导 suite_file（会覆盖同路径文件）
   # auto = 使用 tasks_{dataset}_{首个baseline模型名}.jsonl + test_suites_{...}.jsonl，避免覆盖默认文件
   raw_run_id: auto
-  # builtin | humaneval | mhpp（MHPP 公开 JSONL 无隐藏测例，本地为 smoke 执行，见 mhpp_dataset 模块注释）
-  dataset: mhpp
+  # builtin | humaneval | mhpp | apps（APPS：HF codeparrot/apps，stdio 题；call-based 默认跳过）
+  dataset: apps
+  apps:
+    hf_dataset: codeparrot/apps
+    hf_revision: refs/convert/parquet
+    split: train
+    limit: 5
+    difficulties: null
+    max_tests_per_task: 5
+    always_refresh: false
+    skip_call_based: true
   humaneval:
     url: https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz
     limit: 0

@@ -8,6 +8,9 @@ openai>=1.30.0
 python-dotenv>=1.0.0
 PyYAML>=6.0.1
 
+# APPS dataset (src/module1_data/apps_dataset.py)
+datasets>=2.18.0
+
 # Numerics & statistics (src/statistical_tests.py)
 numpy>=1.26.0
 scipy>=1.11.0
