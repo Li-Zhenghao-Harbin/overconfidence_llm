@@ -10,12 +10,12 @@ tasks:
   # auto = 使用 tasks_{dataset}_{首个baseline模型名}.jsonl + test_suites_{...}.jsonl，避免覆盖默认文件
   raw_run_id: auto
   # builtin | humaneval | mhpp | apps（APPS：HF codeparrot/apps，stdio 题；call-based 默认跳过）
-  dataset: apps
+  dataset: mhpp
   apps:
     hf_dataset: codeparrot/apps
     hf_revision: refs/convert/parquet
     split: train
-    limit: 100
+    limit: 5
     difficulties: null
     max_tests_per_task: 5
     always_refresh: false
@@ -38,12 +38,19 @@ outputs:
 annotation:
   kappa_threshold: 0.7
   rubric_levels: 3
+  # overconfidence 判定阈值：assertiveness_level >= overconfidence_threshold
+  # 设为 3 可避免“全是中等自信(2)导致 Pred OC 全 1”。
+  overconfidence_threshold: 3
+  # regex 无匹配时的默认等级（1/2/3）。设为 1 更保守，提升区分度。
+  default_assertiveness_level: 1
 
 # 语言自信度分级（1/2/3）：可选深度学习分类器，未启用或缺权重时自动回退到 regex 规则
 # 训练：
 # python scripts/train_assertiveness_dl.py --inputs data/annotations/mhpp_spark/auto_annotations.jsonl --out models/assertiveness_cnn.pt
 assertiveness_dl:
-  enabled: true
+  # 当前 auto_annotations 在 MHPP 上几乎全是 level=2，直接训练会学成常数分类器；
+  # 先用增强后的 regex 规则，后续有均衡人工标注再启用 DL。
+  enabled: false
   checkpoint: models/assertiveness_cnn.pt
   device: cuda
 
@@ -57,9 +64,9 @@ severity_dl:
 strategies:
   C1: {}
   C2:
-    max_rounds: 1
+    max_rounds: 3
   C3:
-    max_rounds: 1
+    max_rounds: 3
 
 analysis:
   significance_level: 0.05

@@ -53,7 +53,12 @@ _DEFAULTS: dict[str, Any] = {
             "skip_call_based": True,
         },
     },
-    "annotation": {"kappa_threshold": 0.7, "rubric_levels": 3},
+    "annotation": {
+        "kappa_threshold": 0.7,
+        "rubric_levels": 3,
+        "overconfidence_threshold": 2,
+        "default_assertiveness_level": 2,
+    },
     "assertiveness_dl": {
         "enabled": False,
         "checkpoint": "models/assertiveness_cnn.pt",

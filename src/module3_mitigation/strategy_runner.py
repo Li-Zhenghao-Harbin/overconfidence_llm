@@ -166,6 +166,7 @@ class StrategyRunner:
             test_results=results,
         )
         level, note = self._annotator.auto_annotate(explanation or "")
+        annotator_id = "dl_cnn" if note == "dl_cnn" else "auto_regex"
         ann = AnnotationRecord(
             sample_id=sid,
             task_id=task.task_id,
@@ -173,7 +174,7 @@ class StrategyRunner:
             condition=condition,
             explanation=explanation,
             assertiveness_level=level,
-            annotator_id="auto_regex",
+            annotator_id=annotator_id,
             annotation_note=note,
             round_number=round_number,
         )
